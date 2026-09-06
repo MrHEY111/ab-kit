@@ -1,6 +1,6 @@
 # AB-Kit — Arbeitsblätter und Lösungen aus einer Spec
 
-Kit-Version: siehe `KIT_VERSION` · Stand 03.09.2026 · Ort: `G:\Meine Ablage\Python_Skripte\_gemeinsam\ab_kit\`
+Kit-Version: siehe `KIT_VERSION` · Stand 06.09.2026 · Repo: `https://github.com/mrhey111/ab-kit` (öffentlich, kanonisch) · Arbeitskopie Windows: `C:\dev\ab_kit\` (Klon)
 <!-- schema-bindung: v1.14 (2026-09-03) -->
 
 Ein Renderer, alle Unterschiede zwischen Blättern stehen in der Spec. Pro
@@ -22,11 +22,13 @@ Das Kit ersetzt `Python_Skripte\CH-09.WAS\build_*.js`, `scaffold_gen.py`,
 
 ## Installation
 
-**Windows (lokal, Google Drive) — ein Befehl, prüft und installiert alles
-Fehlende inkl. LibreOffice und macht einen Funktionstest:**
+**Windows — die Arbeitskopie ist ein Klon des Repos unter `C:\dev\ab_kit\`,
+nie auf Google Drive (Falle 8).** Ein Befehl prüft und installiert alles
+Fehlende inkl. LibreOffice und macht einen Funktionstest:
 
 ```
-powershell -ExecutionPolicy Bypass -File "G:\Meine Ablage\Python_Skripte\_gemeinsam\ab_kit\setup_windows.ps1"
+git clone https://github.com/mrhey111/ab-kit C:\dev\ab_kit
+powershell -ExecutionPolicy Bypass -File "C:\dev\ab_kit\setup_windows.ps1"
 ```
 
 Von Hand entspricht das:
@@ -36,14 +38,14 @@ pip install pillow pyyaml
 npm install -g docx yaml
 ```
 
-`npm install` **nicht** im Kit-Ordner ausführen — Google Drive schreibt
-`node_modules` als 0-Byte-Dateien (Falle 8). `ab_kit.js` sucht die Module
-zuerst lokal, dann im globalen npm-Root (`%APPDATA%\npm\node_modules`).
-Für PDF: LibreOffice (`winget install TheDocumentFoundation.LibreOffice`);
+Statt global geht auf `C:` auch `npm install` im Kit-Ordner; `ab_kit.js` sucht
+die Module zuerst lokal, dann im globalen npm-Root (`%APPDATA%\npm\node_modules`).
+Auf Google Drive `npm install` nie ausführen — dort entstehen 0-Byte-Dateien
+(Falle 8). Für PDF: LibreOffice (`winget install TheDocumentFoundation.LibreOffice`);
 `ab_kit.js` findet `soffice` über PATH oder `C:\Program Files\LibreOffice\program\`.
+Git-Ablauf (commit, push, pull): `G:\Meine Ablage\_Sessions\2026-09_Archivpaket\AB-Kit_Git-Kurzanleitung.md`.
 
-**Linux-Container:** `pip install pillow pyyaml`, im Kit-Ordner `npm install`,
-`soffice` ist vorhanden.
+**Linux-Container:** siehe „Nutzung im Container".
 
 ## Nutzung im Container
 
@@ -91,7 +93,7 @@ Spec und kein Bild darf ins Repo (siehe `.gitignore`).
 ## Ablauf
 
 ```
-cd "G:\Meine Ablage\Python_Skripte\_gemeinsam\ab_kit"
+cd C:\dev\ab_kit
 python ab_assets.py "<Blockordner>\AB_X_GR.spec.yaml"
 node   ab_kit.js   "<Blockordner>\AB_X_GR.spec.yaml" --pdf
 ```
@@ -302,6 +304,16 @@ Seite 2 mit elf Befunden).
   Tabellenhöhen und Tab-Leader minimal anders — SuS-seitig ausschließlich PDF.
 
 ## Änderungsprotokoll
+
+- **Repo-Umzug (06.09.2026), Kit-Version unverändert 1.3** — Der Kit lebt
+  jetzt im öffentlichen Repo `https://github.com/mrhey111/ab-kit` (MIT);
+  Arbeitskopie auf Windows ist der Klon `C:\dev\ab_kit\`, der alte Ordner auf
+  `G:` ist ausgemustert. Neu: `.gitignore` (schließt `_build\`, Specs, Bilder,
+  docx, pdf aus — das Repo ist öffentlich, Specs sind Unterrichtsinhalt),
+  `.gitattributes` (LF), `LICENSE`, Abschnitt „Nutzung im Container",
+  `package.json` auf 1.3.0. Pfade in Installation, Ablauf und
+  `setup_windows.ps1` nachgezogen. Claude-Container klonen das Repo selbst
+  und bauen dort; die Upload-Schleife über Fabian entfällt.
 
 - **1.3 (06.09.2026)** — Neuer Asset-Typ `bilddatei` in `ab_assets.py`: bindet
   eine vorhandene Bilddatei ein, mit Zuschnitt über Anteile, Graustufen,

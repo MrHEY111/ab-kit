@@ -1,7 +1,8 @@
 # setup_windows.ps1 - AB-Kit auf einem weiteren Windows-Rechner einrichten
 # ---------------------------------------------------------------------------
 # Aufruf (PowerShell, kein Admin noetig - LibreOffice fragt per UAC nach):
-#   powershell -ExecutionPolicy Bypass -File "G:\Meine Ablage\Python_Skripte\_gemeinsam\ab_kit\setup_windows.ps1"
+#   git clone https://github.com/mrhey111/ab-kit C:\dev\ab_kit
+#   powershell -ExecutionPolicy Bypass -File "C:\dev\ab_kit\setup_windows.ps1"
 #
 # Prueft und installiert: LibreOffice (winget), docx + yaml (npm global),
 # pillow + pyyaml (pip). Danach ein Funktionstest mit AB_Messen_GR.
@@ -13,7 +14,7 @@
 # als ANSI und stolpert ueber Umlaute und Gedankenstriche.
 
 $ErrorActionPreference = "Continue"
-$kit = "G:\Meine Ablage\Python_Skripte\_gemeinsam\ab_kit"
+$kit = "C:\dev\ab_kit"
 $ok = $true
 
 function Zeile($t) { Write-Host ""; Write-Host "== $t" -ForegroundColor Cyan }
@@ -54,7 +55,7 @@ if (Test-Path $soffice) {
   if (Test-Path $soffice) { Write-Host "  installiert." } else { Write-Host "  NICHT gefunden - Installation pruefen." -ForegroundColor Red; $ok = $false }
 }
 
-Zeile "npm-Module docx + yaml (global - nie im Kit-Ordner auf G:)"
+Zeile "npm-Module docx + yaml (global; lokales npm install im Klon auf C: geht ebenfalls)"
 $root = Join-Path $env:APPDATA "npm\node_modules"
 $fehlt = @("docx", "yaml") | Where-Object { -not (Test-Path (Join-Path $root $_)) }
 if ($fehlt.Count -eq 0) {
