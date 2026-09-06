@@ -1,0 +1,3 @@
+# Zeilenenden: im Repo und im Checkout immer LF, auf jeder Plattform.
+# Verhindert Scheinaenderungen beim Wechsel Windows <-> Linux-Container.
+* text=auto eol=lf

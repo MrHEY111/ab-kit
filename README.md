@@ -1,0 +1,334 @@
+# AB-Kit — Arbeitsblätter und Lösungen aus einer Spec
+
+Kit-Version: siehe `KIT_VERSION` · Stand 03.09.2026 · Ort: `G:\Meine Ablage\Python_Skripte\_gemeinsam\ab_kit\`
+<!-- schema-bindung: v1.14 (2026-09-03) -->
+
+Ein Renderer, alle Unterschiede zwischen Blättern stehen in der Spec. Pro
+Arbeitsblatt oder Erwartungshorizont gibt es genau eine Textdatei
+`<Stamm>.spec.yaml` im Blockordner des Archivs (Konvention: `_Sessions\2026-09_Archivpaket\Spec_Konvention.md`).
+Das Kit ersetzt `Python_Skripte\CH-09.WAS\build_*.js`, `scaffold_gen.py`,
+`diagramm_gen.py` und `Python_Skripte\_gemeinsam\Layout_wh.js`.
+
+## Dateien
+
+| Datei | Zweck |
+|---|---|
+| `KIT_VERSION` | Versionsmarke (eine Zeile). Jede Spec trägt `kit_version`; Major-Abweichung = Abbruch. |
+| `ab_assets.py` | Erzeugt aus dem Block `assets:` der Spec alle PNGs (RGB) plus Sidecar `<name>.json` mit Anzeigegröße. |
+| `ab_kit.js` | Rendert die Spec zu docx, optional zu PDF (`--pdf`, braucht `soffice`). |
+| `package.json` | Abhängigkeiten `docx`, `yaml` — siehe Installation. |
+| `_build\<Stamm>\` | Zwischenprodukte (PNG, JSON, docx, pdf). Nie ins Archiv kopieren, außer docx + pdf. |
+| `_build\specs\` | Arbeitskopien der Specs während einer Session; die gültige Spec liegt im Blockordner. |
+
+## Installation
+
+**Windows (lokal, Google Drive) — ein Befehl, prüft und installiert alles
+Fehlende inkl. LibreOffice und macht einen Funktionstest:**
+
+```
+powershell -ExecutionPolicy Bypass -File "G:\Meine Ablage\Python_Skripte\_gemeinsam\ab_kit\setup_windows.ps1"
+```
+
+Von Hand entspricht das:
+
+```
+pip install pillow pyyaml
+npm install -g docx yaml
+```
+
+`npm install` **nicht** im Kit-Ordner ausführen — Google Drive schreibt
+`node_modules` als 0-Byte-Dateien (Falle 8). `ab_kit.js` sucht die Module
+zuerst lokal, dann im globalen npm-Root (`%APPDATA%\npm\node_modules`).
+Für PDF: LibreOffice (`winget install TheDocumentFoundation.LibreOffice`);
+`ab_kit.js` findet `soffice` über PATH oder `C:\Program Files\LibreOffice\program\`.
+
+**Linux-Container:** `pip install pillow pyyaml`, im Kit-Ordner `npm install`,
+`soffice` ist vorhanden.
+
+## Nutzung im Container
+
+Der Kit liegt öffentlich unter `https://github.com/mrhey111/ab-kit`. Ein
+Claude-Container (erlaubte Domains: github.com, raw.githubusercontent.com,
+registry.npmjs.org, pypi.org) holt und baut ihn selbst:
+
+```
+git clone https://github.com/mrhey111/ab-kit
+cd ab-kit
+pip install pillow pyyaml
+npm install
+```
+
+`soffice` ist im Container vorhanden, `--pdf` funktioniert also ohne
+Installation; ebenso `pdftoppm` für die Sichtprüfung. Fonts: Liberation Sans
+ist die erste Stufe der Fallbackkette (Falle 11), die PNGs werden damit
+genauso breit wie unter Windows mit Arial.
+
+Der Container hat keinen Zugriff auf `G:`. Deshalb:
+
+- Die Spec wird als **Arbeitskopie** in den Container gebracht (Upload oder
+  Wortlaut aus dem Chat) und dort gebaut, z. B. unter `_build/specs/`. Die
+  gültige Spec bleibt die im Blockordner des Archivs.
+- Assets vom Typ `bilddatei` mit absolutem `G:`-Pfad (`pfad: 'G:\…'`)
+  müssen in der Arbeitskopie auf einen Container-Pfad umgebogen werden; das
+  Bild selbst wird mit hochgeladen. Relative Pfade lösen gegen den Ordner
+  der Spec auf und funktionieren unverändert, wenn das Bild daneben liegt.
+  In der Spec, die ins Archiv geht, steht wieder der `G:`-Pfad.
+- `kit_version` der Spec muss zur `KIT_VERSION` des Klons passen (Major),
+  sonst bricht der Lauf ab — bei einem alten Klon `git pull`.
+
+Ablauf im Container:
+
+```
+python ab_assets.py _build/specs/AB_X_GR.spec.yaml
+node   ab_kit.js   _build/specs/AB_X_GR.spec.yaml --pdf
+pdftoppm -r 60 -png _build/AB_X_GR/AB_X_GR.pdf _build/AB_X_GR/seite
+```
+
+Ergebnis der Container-Session ist die geprüfte Spec; Fabian baut sie lokal
+einmal und legt docx und pdf in den Blockordner. Nichts aus `_build/`, keine
+Spec und kein Bild darf ins Repo (siehe `.gitignore`).
+
+## Ablauf
+
+```
+cd "G:\Meine Ablage\Python_Skripte\_gemeinsam\ab_kit"
+python ab_assets.py "<Blockordner>\AB_X_GR.spec.yaml"
+node   ab_kit.js   "<Blockordner>\AB_X_GR.spec.yaml" --pdf
+```
+
+Ausgabe landet in `_build\AB_X_GR\`. Von dort docx **und** pdf in den
+Blockordner kopieren (Namensparität, Lint warnt bei Solo-docx). Optional
+`--out DIR` für einen anderen Zielordner, `--force` bei Major-Abweichung der
+`kit_version`, `--check` für den reinen Spec- und Bauplan-Check ohne Bau
+(braucht keine Assets, dauert unter einer Sekunde — vor jedem Bau sinnvoll).
+
+Sichtprüfung immer über das PDF (`pdftoppm -r 60 -png`), nie über die docx.
+
+## Spec-Format (Kurzreferenz)
+
+```yaml
+kit_version: "1.0"          # Pflicht — Kit-Stand, mit dem die Spec gebaut wurde
+dokumenttyp: ab             # ab | loesung
+block: CH-09.WAS-B3         # Pflicht
+titel: Wasserbestandteile   # Pflicht — Kurzname des Materials
+zweig: GR                   # Pflicht — GR | G | R | H | LK (Lösung)
+ausgabe: AB_Wasserbestandteile_GR.docx   # Pflicht — Dateiname der Ausgabe
+stand: 2026-09-03           # Pflicht — ISO, Stand dieser Spec
+version: "2.2"              # optional — Materialversion (Blueprint-Bezug)
+stil:                       # optional — Profil + Überschreibungen
+  profil: kompakt           # kompakt | kanon | loesung-kompakt | loesung-kanon
+  rand: {oben: 850, unten: 850, links: 850, rechts: 850}
+kopf:                       # optional — Kopfzeile auf jeder Seite
+  links: "Chemie · Jahrgang 9 · Wasser und Wasserstoff"
+bauplan:                    # optional — nur für den ausdrücklichen Opt-out
+  scaffold: false           # Merksatz-Scaffold weglassen (Default: Pflicht)
+seiten:                     # Pflicht — jede Seite = eigene docx-Section = eine Stunde
+  - titel: Wasser enthält Sauerstoff
+    untertitel: "Arbeitsblatt · Teil 1"
+    elemente:
+      - {typ: aufgabe, nr: "1", afb: I, bezug: Einstieg, text: Vermuten und beobachten}
+      - ...                 # afb: I | II | III und bezug: je aufgabe (Bauplan-Check)
+assets:                     # optional — PNG-Generatoren (ab_assets.py)
+  scaffold_teil1: {typ: scaffold, zeilen: [[b, "Notanker …"], [r, "…"]]}
+```
+
+**Inline-Markup** in allen Textfeldern: `**fett**`, `*kursiv*`. Alternativ
+Runs als Liste `[["Text", {fett: true, groesse: 26, farbe: akzent}], …]`.
+Farbnamen: `text`, `dunkel`, `grau`, `hellgrau`, `rahmen`, `hell`, `akzent`,
+sonst Hex.
+
+### Profile (Defaults für `stil:`)
+
+| Profil | Vorbild | Schrift | Ränder (twips) | Kästen |
+|---|---|---|---|---|
+| `kompakt` | CH-09.WAS AB | Calibri 11 | 850 rundum | schlicht (Kopf + Kasten darunter) |
+| `kanon` | PH-10.SGE AB (Layout_wh) | Calibri 10 | 720/900/500/900 | gerahmt mit Label |
+| `loesung-kompakt` | CH-09.WAS Lösung | Calibri 10,5 | 850 rundum | — |
+| `loesung-kanon` | PH-10.SGE Lösung | Arial 10,5 | 900/1000/700/1000 | gerahmt, Marker ▸ |
+
+Alle Profilwerte lassen sich unter `stil:` einzeln überschreiben
+(`font`, `groesse`, `rand`, `satzbreite`, `farben`, `kaesten`, `zelle`, …).
+
+### Elementtypen
+
+| typ | Felder | Bemerkung |
+|---|---|---|
+| `kopfzeile` | `links`, `rechts`, `variante: zeile\|tabelle`, `titel`, `zeile_oben`, `sperrung`, `breite_rechts` | meist über `kopf:` + Seiten-`titel` automatisch; `zeile_oben` = Kleinzeile über dem Titel (Layout_wh) |
+| `namenszeile` | `name_bis`, `datum_ab` | Name/Datum mit Unterstrich-Leadern (Layout_wh) |
+| `titel` | `text`, `untertitel`, `linie` | |
+| `abschnitt` | `text`, `umbruch` | unnummerierter Kopf (Stundenfrage, Sprinteraufgabe, …) |
+| `ueberschrift` | `text`, `ebene: 1\|2` | Lösungen |
+| `aufgabe` | `nr`, `text`, `zitat`, `unterzeile`, `umbruch`, `afb`, `bezug` | `zitat: true` = AB-Wortlaut grau-kursiv (Lösung); `afb: I\|II\|III` und `bezug` (Einstieg, Simulation, Versuch, …) werden nicht gerendert, nur vom Bauplan-Check gelesen |
+| `anweisung` / `text` | `text`, `groesse`, `fett`, `kursiv`, `farbe`, `vor`, `nach`, `einzug`, `ausrichtung` | |
+| `stichpunkte` | `punkte: []` | Aufzählung |
+| `loesung` | `text` | Lösungsabsatz mit Marker |
+| `stundenfrage` | `modus: fest\|platzhalter`, `text`, `hoehe`, `zeilen`, `label`, `sperrung`, `staerke`, `rahmen` | K-008: Platzhalter zum Selbsteintragen; Profil-Defaults `stundenfrage_label/_sperrung/_fett/_staerke/_rahmen` |
+| `ritual` | `kanon: vermuten\|punkt`, `label`, `zusatz`, `zusatz_inline` | 🔮 / 🎯, Wortlaut aus dem Profil; `label: ""` = ohne Label (Layout_wh) |
+| `teilaufgabe` | `buchstabe`, `text`, `einzug` | a) / b) unter einer Aufgabe |
+| `ankreuzen` | `optionen: []`, `einzug` | ☐-Zeilen |
+| `zitat` | `text`, `einzug` | wörtlicher AB-Text in der Lösung, grau-kursiv |
+| `raster` / `tabelle` | `spalten: [{kopf, breite, ausrichtung}]`, `zeilen`, `zeilenhoehe`, `gruppen`, `luecke`, `kopf_fuellung` | `zeilen`-Eintrag: String (Label 1. Spalte) oder Liste von Zellen; Zelle: String oder `{text, fett, farbe}`; `gruppen` = Tabellen nebeneinander |
+| `schreibkasten` | `hoehe`, `breite` | |
+| `schreiblinien` | `anzahl`, `einzug`, `abstand` | Tab-Leader, nie Absatzrahmen |
+| `lueckenzeile` | `text` mit `\t`, `positionen: []`, `groesse`, `einzug`, `zusatzlinien` | Unterstrich-Leader je Tab; Position als Zahl oder `{pos, leader: false}`; mit `zusatzlinien` = Satzmuster |
+| `infokasten` | `titel`, `absaetze`, `punkte`, `fuellung`, `rahmen`, `staerke`, `zelle` | grau (`hell`) als Default |
+| `befundkasten` | wie infokasten | Titel „Befund — ergänzt durch die Lehrkraft" |
+| `merksatz` | `variante: inline\|kasten`, `scaffold`, `hoehe`, `zeilen`, `hinweis` | inline = Notanker rechts neben der Schreibfläche (alt) |
+| `notanker` | `scaffold`, `position: fuss\|hier`, `ab_seite: 1\|2`, `hinweis`, `breite` | Default: gedreht im Seitenfuß (Section-Footer) mit Dreh-Hinweis |
+| `bild` / `balkenraster` | `asset`, `breite`, `ausrichtung`, `vor`, `nach` | |
+| `nebeneinander` | `links`/`rechts` (Elementlisten) oder `links_bild`/`rechts_bild`, `breite_links`, `breite_rechts`, `breite_bild`, `valign`, `luecke`, `rahmen` | eine Tabelle; `luecke` = Lückenspalte, `rahmen: grau` = beide Zellen gerahmt (Planpaar) |
+| `sprinter` | `text` (String/Liste) oder `aufgaben` (a), b), …), `hoehe`, `label`, `emoji`, `sperrung`, `linien`, `abstand` | `linien` = Schreiblinien je Teilaufgabe im Kasten |
+| `leer` | `hoehe` | |
+| `seitenumbruch` | — | |
+
+Aufnahmeregel: Ein Elementtyp kommt ins Kit, wenn er zweimal gebraucht
+wurde. Ein wirklich neuer Typ braucht eine Renderer-Erweiterung in
+`ab_kit.js` (`ELEMENTE.<name>`), einen Eintrag hier und einen Bump von
+`KIT_VERSION`.
+
+### Asset-Typen (`ab_assets.py`)
+
+| typ | Felder |
+|---|---|
+| `scaffold` | `zeilen: [[b\|r\|i, text]]`, `pt`, `zeilenabstand`, `innenabstand`, `farbe`, `rahmen` |
+| `stromkreis` | `breite`, `messgeraet: A\|V` (sonst leer) | WH-Stil: Lampe oben, Quelle mit Polen unten |
+| `balkenraster` | `breite`, `hoehe`, `y_titel`, `y_max`, `y_schritt`, `kategorien` |
+| `achsenkreuz` | `breite`, `hoehe`, `x_label`, `y_label`, `gitter: [nx, ny]`, `felder: {x, y}`, `pfeile` |
+| `schaltplan` | `breite`, `quelle`, `bauteil`, `messgeraete: true\|false` |
+| `kennlinien` | `breite`, `hoehe`, `x_max`, `x_schritt`, `y_max`, `y_schritt`, `reihen: [{name, u, i, farbe, marker, kurve: gerade\|potenz\|keine}]` |
+| `bilddatei` | `pfad`, `breite`, `beschnitt: {links, oben, rechts, unten}` (Anteile 0..1), `graustufen`, `autokontrast`, `cutoff`, `rahmen`, `rahmenfarbe` |
+
+`bilddatei` bindet ein vorhandenes Bild ein (Foto, Scan, extern erzeugtes PNG)
+statt es zu zeichnen — der Zuschnitt steht damit in der Spec, nicht in einer
+zweiten Bilddatei. Relative `pfad`-Angaben werden gegen den **Ordner der Spec**
+aufgelöst, nicht gegen den Kit-Ordner. Transparenz wird auf Weiß gelegt
+(Falle 4). Für Fremdbilder gehört die Quellenangabe als Textelement unter das
+Bild (§ 63 UrhG) und die Quelle in die Quellentabelle des Blueprints.
+
+Alle Assets werden 4-fach aufgelöst gerendert; die Anzeigegröße steht im
+Sidecar-JSON und wird beim Einbetten verwendet. `breite` am Element
+überschreibt sie proportional.
+
+## Bauplan-Check (Kit 1.2)
+
+Jedes Arbeitsblatt (`dokumenttyp: ab`) wird beim Bau und bei `--check` gegen
+den Bauplan aus `G:\Meine Ablage\Zettlr_Unterrichtsarchiv\_Grundsaetze\AB_Qualitaet.md`
+Teil A geprüft. Einheit ist eine Seite der Spec (= eine Stunde); Seiten ohne
+`stundenfrage` und ohne `aufgabe` werden übersprungen, Lösungen ganz.
+Nur Warnungen, nie Abbruch — der Check fängt Strukturfehler, die
+Prüffragen in Teil A ersetzt er nicht.
+
+| Element | Prüfung | Woran der Check es erkennt |
+|---|---|---|
+| A-1 Anknüpfung | erste Aufgabe weist ihren Bezug aus | `bezug:` an der ersten `aufgabe` |
+| A-2 Materialbezug | jede AFB-I/II-Aufgabe nennt ihre Quelle | `bezug:` an jeder `aufgabe` mit `afb: I` oder `II` |
+| A-3 AFB-Progression | Start mit I, mindestens eine II, kein Rückfall, III nicht als nummerierte Aufgabe | `afb:` je `aufgabe` in Dokumentreihenfolge (auch innerhalb von `nebeneinander`) |
+| A-4 Stundenfrage und Merksatz | `stundenfrage` vorhanden; Merksatz-Anschluss (`ritual kanon: punkt` oder `merksatz`) hinter der letzten Aufgabe; verdeckter Scaffold vorhanden | `notanker` oder `merksatz` mit `scaffold`; Opt-out **nur** ausdrücklich über `bauplan: {scaffold: false}` |
+| A-5 Sprinteraufgabe | genau ein `sprinter`, nach dem Merksatz-Anschluss, keine Aufgaben danach | Elementreihenfolge |
+
+Specs ohne `afb:`-Angaben (Bestand vor 1.2) bekommen nur die Strukturprüfung
+A-4/A-5 und den Hinweis, dass die AFB-Kette nicht prüfbar ist. Nachrüsten
+beim nächsten Anfassen (Retrofit träge), kein Bestandsdurchlauf.
+Testfall mit bewusst fehlerhafter Seite: `_build\specs\bauplan_test.spec.yaml`
+(`node ab_kit.js _build\specs\bauplan_test.spec.yaml --check` → Seite 1 ohne,
+Seite 2 mit elf Befunden).
+
+## Fallenliste — im Kit gekapselt, hier dokumentiert
+
+1. **Kein `spacing.line` im Default-Style.** Schneidet in LibreOffice
+   eingebettete Bilder ab. `ab_kit.js` setzt es nirgends.
+2. **Leerer Absatz nach jeder Tabelle.** LibreOffice verschmilzt zwei direkt
+   aufeinanderfolgende Tabellen. `tabelleMitSpacer()` hängt ihn automatisch an.
+3. **`WidthType.DXA` + `columnWidths`** bei ungleich breiten Spalten;
+   `PERCENTAGE` macht sie platt. Alle Tabellen im Kit sind DXA.
+4. **PNGs als RGB, nie RGBA.** RGBA lässt den Render abstürzen.
+   `ab_assets.py` konvertiert vor dem Speichern.
+5. **Gedrehte Texte als PIL-PNG**, nicht als OOXML-Rotation — LibreOffice
+   rendert gedrehte Textrahmen unzuverlässig.
+6. **Nach dem letzten Tabstop mit Leader muss ein Zeichen folgen**, sonst
+   bleibt der letzte Unterstrich weg. `lueckenzeile` und `schreiblinien` hängen
+   ein geschütztes Leerzeichen an.
+7. **Nutzbare Breite = 11906 − Rand links − Rand rechts** (A4 in twips);
+   bei 850 twips Rand also 10206. `ab_kit.js` rechnet das aus `stil.rand`.
+8. **`npm install` auf Google Drive erzeugt 0-Byte-Dateien** (608 von 622 im
+   Test). Module global installieren; `ab_kit.js` sucht dort nach.
+9. **YAML-Flow-Mapping und Kommas:** `{typ: text, text: Satz, mit Komma}`
+   zerlegt den Text am Komma ohne Fehlermeldung. Texte mit Komma quoten oder
+   als Blockskalar `>-` schreiben.
+10. **YAML und „U : I":** Ein Doppelpunkt mit Leerzeichen in einem
+    ungequoteten Skalar ist ein Parserfehler („mapping values are not
+    allowed"). Quoten.
+11. **Fontpfade nie fest verdrahten.** `ab_assets.py` läuft über eine
+    Fallbackkette (Liberation → Arial → DejaVu → Calibri); Liberation Sans und
+    Arial sind metrisch kompatibel, die PNGs bleiben also gleich breit.
+12. **Notanker im Seitenfuß = Section-Footer.** Damit rutscht er nie auf eine
+    Folgeseite (Befund PH-10.SGE: dritte PDF-Seite nur mit Scaffold). Der
+    untere Seitenrand wird automatisch um die Bildhöhe erhöht; `ab_seite: 2`
+    setzt `titlePage` und lässt die erste Seite der Section frei.
+13. **Tabellen reißen zwischen Seiten auf.** Landet ein Tabellenkopf am
+    Seitenfuß, `umbruch: true` am zugehörigen `aufgabe`-Element setzen und
+    nach Inhaltsänderungen prüfen, ob der Umbruch noch sitzt.
+14. **Nebeneinander = eine Tabelle mit Lückenspalte**, nie zwei Tabellen
+    (siehe 2). `tabelle.gruppen` und `nebeneinander` machen genau das.
+15. **Word-Nachbearbeitung erzeugt Drift.** CH-09.WAS v2.1 wurde direkt im
+    Dokument geändert; Archiv-docx und Skript liefen auseinander („Das
+    Simulation", „Im Unterrichtsmedium"). Änderungen gehören in die Spec,
+    dann Neubau — nie umgekehrt.
+16. **Python-Konsole unter Windows ist cp1252.** Skripte, die Unicode
+    ausgeben, mit `PYTHONIOENCODING=utf-8` starten.
+17. **Word per COM hängt auf `G:`.** `Documents.Open` auf einem
+    Google-Drive-Pfad blockiert ohne Fehlermeldung; für einen Word-Export
+    die docx erst auf `C:` kopieren. Der Kit-Weg ist ohnehin `--pdf`
+    (LibreOffice); Word-PDFs nur zur Gegenprobe.
+18. **Leerabsatz nach Tabellen kostet eine Zeile.** Im Profil `kanon` ist er
+    über `stil.tabellenabstand` (twips, exakte Zeilenhöhe) auf 60 gestellt,
+    sonst passt kein einseitiges Blatt; `kompakt` behält die natürliche Höhe,
+    weil die CH-09.WAS-Vorlage genau diesen Abstand hat.
+19. **`soffice --version` hängt bis zu 100 s**, die eigentliche Konvertierung
+    braucht 2 s. `ab_kit.js` prüft deshalb nur die Existenz der Datei und
+    konvertiert mit eigenem Profil (`%LOCALAPPDATA%\ab_kit_lo_profil`) und
+    `--norestore` — kein Lock-Konflikt mit einem offenen LibreOffice, kein
+    Profil auf Google Drive. Erster Lauf auf einem neuen Rechner legt das
+    Profil an und dauert einmalig länger.
+
+## Bekannte Einschränkungen
+
+- Das Kit ist bewusst statisch: neuer Elementtyp = Renderer-Erweiterung.
+- Eine Kit-Änderung verändert beim Neubau auch alte ABs. Deshalb steht
+  `kit_version` in jeder Spec; bei Major-Abweichung bricht der Lauf ab.
+- Seitenumbrüche folgen dem Inhalt. Wer ein Blatt auf genau zwei Seiten
+  halten will, prüft das PDF und justiert `hoehe`/`zeilen` in der Spec.
+- Die docx wird für LibreOffice-Render gebaut und geprüft. Word rendert
+  Tabellenhöhen und Tab-Leader minimal anders — SuS-seitig ausschließlich PDF.
+
+## Änderungsprotokoll
+
+- **1.3 (06.09.2026)** — Neuer Asset-Typ `bilddatei` in `ab_assets.py`: bindet
+  eine vorhandene Bilddatei ein, mit Zuschnitt über Anteile, Graustufen,
+  Autokontrast und optionalem Rahmen; relative Pfade lösen gegen den
+  Spec-Ordner auf (`SPEC_DIR`). `ab_kit.js` unverändert — Einbindung wie bisher
+  über `bild: {asset: …}` bzw. `links_bild`/`rechts_bild`. Anlass: Fotos in
+  PH-08.STK-B5/B6. Bestehende Specs mit `kit_version: "1.2"` laufen unverändert
+  (Minor, nur Hinweis); Retrofit träge beim nächsten Anfassen.
+
+- **1.2 (03.09.2026)** — Bauplan-Check: `ab_kit.js` prüft jedes AB gegen
+  `AB_Qualitaet.md` Teil A (A-1 bis A-5), neue optionale Felder `afb` und
+  `bezug` an `aufgabe`, optionaler Spec-Block `bauplan: {scaffold: false}`
+  als einziger Opt-out für den Scaffold, neuer Schalter `--check`. Rendering
+  unverändert. Alle acht Archiv-Specs auf `kit_version: "1.2"` gesetzt, die
+  vier ABs mit `afb`/`bezug` je Aufgabe versehen (Ausgabe unverändert, kein
+  Neubau nötig). Testfall `_build\specs\bauplan_test.spec.yaml`.
+- **1.1 (03.09.2026)** — WH-Bausteine aus `Layout_wh.js` überführt: neue
+  Elemente `namenszeile`, `teilaufgabe`, `ankreuzen`, `zitat`; `lueckenzeile`
+  mit reinen Tabstops und `zusatzlinien`; `nebeneinander` mit `luecke`/`rahmen`;
+  `sprinter` mit `linien`/`emoji`/`sperrung`; `ritual` mit `zusatz_inline`;
+  `kopfzeile` mit `zeile_oben`; Stil-Tokens `stundenfrage_*`, `loesung_einzug`,
+  `marker`; Asset `stromkreis`, `scaffold.rahmen`. Specs PH-10.SGE-WH1/WH2
+  (AB + Lösung). Alle bestehenden Specs auf `kit_version: "1.1"` gesetzt —
+  Ausgabe unverändert.
+- **1.0 (03.09.2026)** — Erstfassung. Extrahiert aus CH-09.WAS (build_ab.js,
+  build_loesung.js, scaffold_gen.py, diagramm_gen.py), PH-10.SGE
+  (build_loesung_widerstand.js, AB_Widerstand_GR_Inhalt.md) und
+  `_gemeinsam\Layout_wh.js`. Vier Profile, 24 Elementtypen, 5 Asset-Typen.
+  Referenz-Specs: `AB_Wasserbestandteile_GR`, `Loesung_Wasserbestandteile`,
+  `AB_Widerstand_GR`, `Loesung_Widerstand`.

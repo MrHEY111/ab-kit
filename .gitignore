@@ -1,0 +1,35 @@
+# AB-Kit — oeffentliches Repo. Nur der Renderer gehoert hinein.
+# Unterrichtsinhalte, Bilder und Bauprodukte bleiben draussen.
+
+# Zwischenprodukte des Kits
+_build/
+
+# Specs (Unterrichtsinhalte, Bildpfade) und alle Bauprodukte
+*.spec.yaml
+*.docx
+*.pdf
+
+# Bilder (auch Fremdfotos mit reiner Klassensatz-Lizenz nach § 60a UrhG)
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.bmp
+*.tif
+*.tiff
+*.svg
+
+# Abhaengigkeiten und Caches
+node_modules/
+__pycache__/
+*.pyc
+package-lock.json
+
+# LibreOffice-Profil, Editor- und Systemdateien
+ab_kit_lo_profil/
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store

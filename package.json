@@ -1,0 +1,11 @@
+{
+  "name": "ab_kit",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AB-Kit: deklarative Specs (YAML) -> docx fuer Arbeitsblaetter und Loesungen",
+  "main": "ab_kit.js",
+  "dependencies": {
+    "docx": "^9.5.1",
+    "yaml": "^2.8.1"
+  }
+}
