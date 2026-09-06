@@ -17,6 +17,7 @@ Das Kit ersetzt `Python_Skripte\CH-09.WAS\build_*.js`, `scaffold_gen.py`,
 | `ab_assets.py` | Erzeugt aus dem Block `assets:` der Spec alle PNGs (RGB) plus Sidecar `<name>.json` mit Anzeigegröße. |
 | `ab_kit.js` | Rendert die Spec zu docx, optional zu PDF (`--pdf`, braucht `soffice`). |
 | `package.json` | Abhängigkeiten `docx`, `yaml` — siehe Installation. |
+| `bau.ps1` | Windows: Check, Assets, Bau mit PDF für eine oder mehrere Specs und Ablage von docx + pdf **neben der Spec** (Blockordner). `-NurCheck` für den reinen Check. |
 | `_build\<Stamm>\` | Zwischenprodukte (PNG, JSON, docx, pdf). Nie ins Archiv kopieren, außer docx + pdf. |
 | `_build\specs\` | Arbeitskopien der Specs während einer Session; die gültige Spec liegt im Blockordner. |
 
@@ -91,6 +92,20 @@ einmal und legt docx und pdf in den Blockordner. Nichts aus `_build/`, keine
 Spec und kein Bild darf ins Repo (siehe `.gitignore`).
 
 ## Ablauf
+
+**Windows, ein Befehl (empfohlen):**
+
+```
+& "C:\dev\ab_kit\bau.ps1" "<Blockordner>\AB_X_GR.spec.yaml" "<Blockordner>\Loesung_X.spec.yaml"
+```
+
+`bau.ps1` führt je Spec `--check`, `ab_assets.py` und `ab_kit.js --pdf` aus
+und kopiert docx **und** pdf neben die Spec, also in den Blockordner
+(Namensparität). Zwischenprodukte bleiben in `_build\<Stamm>\`. Der Stamm
+kommt aus dem Spec-Feld `ausgabe`. Schlägt der Check fehl, wird die Spec
+übersprungen; Exitcode = Zahl der Probleme. `-NurCheck` prüft nur.
+
+**Von Hand (Windows und Container):**
 
 ```
 cd C:\dev\ab_kit
@@ -305,6 +320,11 @@ Seite 2 mit elf Befunden).
 
 ## Änderungsprotokoll
 
+- **`bau.ps1` (06.09.2026), Kit-Version unverändert 1.3** — Windows-Bauskript:
+  Check, Assets, Bau mit PDF für mehrere Specs in einem Aufruf, docx + pdf
+  werden neben die Spec in den Blockordner kopiert; Stamm aus `ausgabe`,
+  Abbruch je Spec bei fehlgeschlagenem Check, `-NurCheck`. Ersetzt das
+  Kopieren von Hand aus `_build\`.
 - **Repo-Umzug (06.09.2026), Kit-Version unverändert 1.3** — Der Kit lebt
   jetzt im öffentlichen Repo `https://github.com/mrhey111/ab-kit` (MIT);
   Arbeitskopie auf Windows ist der Klon `C:\dev\ab_kit\`, der alte Ordner auf
