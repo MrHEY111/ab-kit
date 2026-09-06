@@ -208,12 +208,13 @@ wurde. Ein wirklich neuer Typ braucht eine Renderer-Erweiterung in
 | typ | Felder |
 |---|---|
 | `scaffold` | `zeilen: [[b\|r\|i, text]]`, `pt`, `zeilenabstand`, `innenabstand`, `farbe`, `rahmen` |
-| `stromkreis` | `breite`, `messgeraet: A\|V` (sonst leer) | WH-Stil: Lampe oben, Quelle mit Polen unten |
+| `stromkreis` | `breite`, `messgeraet: A\|V` (sonst leer) | WH-Stil: Lampe oben, Quelle mit Polen unten — Bestand, für neue Specs `schaltbild` |
 | `balkenraster` | `breite`, `hoehe`, `y_titel`, `y_max`, `y_schritt`, `kategorien` |
 | `achsenkreuz` | `breite`, `hoehe`, `x_label`, `y_label`, `gitter: [nx, ny]`, `felder: {x, y}`, `pfeile` |
-| `schaltplan` | `breite`, `quelle`, `bauteil`, `messgeraete: true\|false` |
+| `schaltplan` | `breite`, `quelle`, `bauteil`, `messgeraete: true\|false` | Bestand, für neue Specs `schaltbild` |
 | `kennlinien` | `breite`, `hoehe`, `x_max`, `x_schritt`, `y_max`, `y_schritt`, `reihen: [{name, u, i, farbe, marker, kurve: gerade\|potenz\|keine}]` |
 | `bilddatei` | `pfad`, `breite`, `beschnitt: {links, oben, rechts, unten}` (Anteile 0..1), `graustufen`, `autokontrast`, `cutoff`, `rahmen`, `rahmenfarbe` |
+| `schaltbild` | `breite`, `hoehe`, `reihe: [{bauteil, label, zustand, zellen, pole, umgekehrt, farbe, seite} \| {zweige: [[…], […]], seite}]`, `zweigabstand`, `farbe` | Kit 1.4: Schaltplan aus Bauteilen + Topologie, siehe unten |
 
 `bilddatei` bindet ein vorhandenes Bild ein (Foto, Scan, extern erzeugtes PNG)
 statt es zu zeichnen — der Zuschnitt steht damit in der Spec, nicht in einer
@@ -225,6 +226,68 @@ Bild (§ 63 UrhG) und die Quelle in die Quellentabelle des Blueprints.
 Alle Assets werden 4-fach aufgelöst gerendert; die Anzeigegröße steht im
 Sidecar-JSON und wird beim Einbetten verwendet. `breite` am Element
 überschreibt sie proportional.
+
+### Asset-Typ `schaltbild` (Kit 1.4)
+
+Schaltplan aus einer deklarativen Beschreibung: Bauteile plus Topologie.
+Ersetzt für neue Specs die starren Typen `schaltplan` und `stromkreis`, die
+unverändert bestehen bleiben (bestehende Specs müssen bitgleich bauen).
+
+```yaml
+plan_b6:
+  typ: schaltbild
+  breite: 260                 # Anzeigebreite px; hoehe optional (sonst aus Inhalt)
+  reihe:                      # Umlauf im Uhrzeigersinn, Start auf der linken Seite
+    - {bauteil: quelle, label: "4,5 V", pole: true}
+    - {bauteil: schalter, zustand: offen, label: S1}
+    - {bauteil: lampe}
+    - {bauteil: schalter, zustand: offen, label: S2}
+plan_b7:
+  typ: schaltbild
+  breite: 300
+  reihe:
+    - {bauteil: quelle, pole: true}
+    - zweige:                 # parallele Zweige, jeder Zweig wieder eine Reihe
+        - [{bauteil: lampe, label: L1}]
+        - [{bauteil: lampe, label: L2}]
+```
+
+**Bauteile** (`bauteil:`, DIN EN 60617): `quelle` (`zellen: n`, `pole: true`
+für + und −, `umgekehrt: true` dreht die Polung), `lampe`, `schalter`
+(`zustand: offen` — Default, Ruhestellung nach DIN EN 60617-7 — oder
+`geschlossen`), `taster`, `widerstand`, `widerstand_veraenderbar` (Alias
+`potentiometer`), `amperemeter`, `voltmeter`, `motor`, `klingel`, `summer`,
+`led`, `diode` (beide mit `umgekehrt`), `sicherung`, `kreuzung` (Leiterkreuzung
+ohne Verbindung), `verbindung` (Verbindungspunkt), `klemme` (offene Stelle /
+Klemmstelle für Prüfstromkreise; Aliasse `offen`, `klemmstelle`), `leer`
+(Leitungsstück als Abstandhalter). Je Bauteil optional `label`,
+`label_stil: kursiv`, `farbe` (Hex) und `seite`. Unbekanntes Bauteil = Abbruch
+mit Liste.
+
+**Topologie und Seitenzuordnung.** Ohne `seite:` verteilt der Generator
+automatisch: erster Eintrag auf die linke Seite (dort steht üblicherweise die
+Quelle); die erste Zweiggruppe auf die rechte Seite als Leiter, Einträge davor
+oben, danach unten; ohne Gruppe werden die übrigen Einträge gleichmäßig auf
+oben, rechts, unten verteilt (Reihenfolge = Umlauf). Wer die Verteilung selbst
+festlegt, gibt `seite: links|oben|rechts|unten` an **jedem** Eintrag (alle
+oder keiner — Mischung bricht ab). Gruppen auf einer senkrechten Seite werden
+als Leiter gezeichnet (Zweige parallel zur Seite, nach innen, Knotenpunkte auf
+der oberen und unteren Leitung); Gruppen auf einer waagerechten Seite als
+Schleife nach außen — das ist das Voltmeter-Bild (Zweig 1 auf der Leitung,
+Zweig 2 darüber). Verschachtelte Gruppen sind bewusst nicht vorgesehen
+(Sek I braucht sie nicht).
+
+**Zeichenregeln, fest verdrahtet:** nur waagerechte und senkrechte Leitungen;
+Eckabstand 24 px, also nie ein Bauteil in der Ecke; Bauteile gleichmäßig auf
+der Seite verteilt; Labels immer aufrecht, nach außen; Polung so, dass der
+Strom im Uhrzeigersinn fließt (links: + oben). Reicht der Platz auf einer
+Seite nicht (40 px je Bauteil), bricht der Generator mit Angabe der Seite ab
+— `breite`/`hoehe` erhöhen oder anders verteilen. Weitere Felder:
+`zweigabstand` (Default 44), `farbe` (Default `1A1A1A`).
+
+Testfälle mit den vier Akzeptanzplänen (PH-08.STK-B6 Reihenschaltung, B7
+Parallelschaltung, B5 Prüfstromkreis, PH-10.SGE-B3 nachgebaut) und einem
+Bauteilkatalog: `_build\specs\schaltbild_test.spec.yaml`.
 
 ## Bauplan-Check (Kit 1.2)
 
@@ -320,6 +383,16 @@ Seite 2 mit elf Befunden).
 
 ## Änderungsprotokoll
 
+- **1.4 (06.09.2026)** — Neuer Asset-Typ `schaltbild` in `ab_assets.py`:
+  Schaltplan aus deklarativer Beschreibung (Bauteilliste `reihe`, parallele
+  `zweige`), 18 Schaltzeichen nach DIN EN 60617, automatische oder explizite
+  Seitenzuordnung, Zeichenregeln der Arbeitsblätter fest verdrahtet (rechte
+  Winkel, keine Bauteile in den Ecken, Schalter offen). `schaltplan` und
+  `stromkreis` bleiben unverändert; Neubau aller zwölf Archiv-Specs liefert
+  bitgleiche PNGs (geprüft 06.09.2026). `ab_kit.js` unverändert. Anlass:
+  Musterschaltplan PH-08.STK-B6 (Reihenschaltung, zwei Schalter) war mit den
+  alten Typen nicht darstellbar. Testfälle `_build\specs\schaltbild_test.spec.yaml`.
+  Bestehende Specs mit `kit_version: "1.2"`/`"1.3"` laufen unverändert (Minor).
 - **`bau.ps1` (06.09.2026), Kit-Version unverändert 1.3** — Windows-Bauskript:
   Check, Assets, Bau mit PDF für mehrere Specs in einem Aufruf, docx + pdf
   werden neben die Spec in den Blockordner kopiert; Stamm aus `ausgabe`,

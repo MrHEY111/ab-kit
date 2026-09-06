@@ -18,6 +18,7 @@ Generatoren (Feld `typ` je Asset):
     schaltplan   Stromkreis Quelle/Bauteil, optional mit Messgeraeten (Loesung)
     kennlinien   U-I-Diagramm mit Messreihen und Ausgleichskurven (Loesung)
     bilddatei    vorhandene Bilddatei (Foto, Scan) mit Zuschnitt und Graustufen
+    schaltbild   Schaltplan aus Bauteilliste und Topologie (Reihe, Zweige)
 
 Fallen, die hier gekapselt sind (siehe README.md):
   - Alle PNGs RGB, nie RGBA (RGBA laesst den docx-Render abstuerzen).
@@ -575,6 +576,455 @@ def gen_bilddatei(a):
     return img
 
 
+# ---------------------------------------------------------- schaltbild ---
+#
+# Deklarativer Schaltplan (Kit 1.4): Bauteile plus Topologie. Zeichenregeln,
+# die auf den Arbeitsblaettern stehen und hier fest verdrahtet sind:
+#   - nur waagerechte und senkrechte Leitungen, rechte Winkel
+#   - genormte Schaltzeichen (DIN EN 60617)
+#   - keine Bauteile in den Ecken (Eckabstand SB_ECKE)
+#   - Schalter in Ruhestellung = offen; geschlossen nur auf Anforderung
+#   - Voltmeter parallel (eigener Zweig), Amperemeter in Reihe
+#
+# Topologie: `reihe` ist der Umlauf im Uhrzeigersinn, Start auf der linken
+# Seite. Ein Eintrag ist ein Bauteil {bauteil: …} oder eine Zweiggruppe
+# {zweige: [[…], […]]}; jeder Zweig ist wieder eine Reihe aus Bauteilen
+# (keine Verschachtelung). Gruppen auf einer senkrechten Seite werden als
+# Leiter gezeichnet (Zweige parallel zur Seite, nach innen), Gruppen auf
+# einer waagerechten Seite als Schleife nach aussen (Voltmeter-Bild).
+
+SB_SEITEN = ("links", "oben", "rechts", "unten")
+SB_ECKE = 24          # Eckabstand, Anzeige-px: kein Bauteil naeher an einer Ecke
+SB_SLOT = 40          # Platzbedarf je Bauteil entlang der Leitung, Anzeige-px
+SB_GRUPPE_RAND = 14   # Abstand Knoten <-> erstes Bauteil in einer Schleife
+SB_RAND = 14          # Grundabstand Rechteck <-> Bildrand
+
+_SB_ALIAS = {
+    "batterie": "quelle", "spannungsquelle": "quelle",
+    "gluehlampe": "lampe", "glühlampe": "lampe",
+    "potentiometer": "widerstand_veraenderbar",
+    "regelwiderstand": "widerstand_veraenderbar",
+    "widerstand_veränderbar": "widerstand_veraenderbar",
+    "verbindungspunkt": "verbindung", "knoten": "verbindung",
+    "offen": "klemme", "offene_stelle": "klemme", "klemmstelle": "klemme",
+    "pruefling": "klemme", "prüfling": "klemme",
+    "leitung": "leer",
+}
+# Ausdehnung des Schaltzeichens nach aussen (Anzeige-px), fuer Raender/Labels
+_SB_AUSSEN = {
+    "quelle": 7, "lampe": 8, "schalter": 9, "taster": 14, "widerstand": 5.5,
+    "widerstand_veraenderbar": 12, "amperemeter": 8, "voltmeter": 8,
+    "motor": 8, "klingel": 9, "summer": 2, "led": 12, "diode": 6,
+    "sicherung": 5.5, "kreuzung": 8, "verbindung": 2.5, "klemme": 3, "leer": 0,
+}
+_SB_LABEL_H = 11      # Hoehe einer Labelzeile (8 pt), Anzeige-px
+
+
+class _SbRahmen:
+    """
+    Lokales Koordinatensystem eines Punktes auf dem Umlauf: u laeuft entlang
+    der Leitung in Umlaufrichtung (Uhrzeigersinn), v zeigt nach aussen (vom
+    Rechteck weg). Eingaben in Anzeige-px, Ausgaben in Renderpixeln.
+    """
+
+    def __init__(self, d, seite, cx, cy):
+        self.d, self.seite, self.cx, self.cy = d, seite, cx, cy
+        self.k = {"oben": 0, "rechts": 90, "unten": 180, "links": 270}[seite]
+
+    def p(self, u, v):
+        u, v = s(u), s(v)
+        if self.seite == "oben":
+            return (self.cx + u, self.cy - v)
+        if self.seite == "rechts":
+            return (self.cx + v, self.cy + u)
+        if self.seite == "unten":
+            return (self.cx - u, self.cy + v)
+        return (self.cx - v, self.cy - u)                       # links
+
+    def box(self, u0, v0, u1, v1):
+        (xa, ya), (xb, yb) = self.p(u0, v0), self.p(u1, v1)
+        return [min(xa, xb), min(ya, yb), max(xa, xb), max(ya, yb)]
+
+    def line(self, pts, col, w):
+        self.d.line([self.p(u, v) for u, v in pts], fill=col, width=w)
+
+    def rect(self, u0, v0, u1, v1, **kw):
+        self.d.rectangle(self.box(u0, v0, u1, v1), **kw)
+
+    def ellipse(self, u0, v0, u1, v1, **kw):
+        self.d.ellipse(self.box(u0, v0, u1, v1), **kw)
+
+    def polygon(self, pts, **kw):
+        self.d.polygon([self.p(u, v) for u, v in pts], **kw)
+
+    def arc(self, u0, v0, u1, v1, t0, t1, col, w):
+        """Bogen von t0 bis t1 (lokale Winkel, gegen den Uhrzeigersinn)."""
+        self.d.arc(self.box(u0, v0, u1, v1), self.k - t1, self.k - t0,
+                   fill=col, width=w)
+
+    def text(self, u, v, txt, f, col, anchor="mm"):
+        self.d.text(self.p(u, v), txt, font=f, fill=col, anchor=anchor)
+
+    def pfeil(self, p0, p1, col, w):
+        """Pfeil von p0 nach p1 (lokal) mit kleiner Spitze."""
+        (u0, v0), (u1, v1) = p0, p1
+        L = math.hypot(u1 - u0, v1 - v0) or 1
+        du, dv = (u1 - u0) / L, (v1 - v0) / L
+        self.line([p0, p1], col, w)
+        self.polygon([(u1, v1),
+                      (u1 - 4 * du + 2 * dv, v1 - 4 * dv - 2 * du),
+                      (u1 - 4 * du - 2 * dv, v1 - 4 * dv + 2 * du)], fill=col)
+
+
+def _sb_draht(d, x0, y0, x1, y1, lw, col):
+    """Achsenparallele Leitung als Rechteck: pixelgenau, egal wer sie zeichnet."""
+    h = lw // 2
+    if y0 == y1:
+        d.rectangle([min(x0, x1) - h, y0 - h, max(x0, x1) + h - 1, y0 + h - 1], fill=col)
+    elif x0 == x1:
+        d.rectangle([x0 - h, min(y0, y1) - h, x0 + h - 1, max(y0, y1) + h - 1], fill=col)
+    else:
+        raise ValueError("schaltbild: Leitung muss waagerecht oder senkrecht sein")
+
+
+def _sb_knoten(d, x, y, col):
+    r = s(2.5)
+    d.ellipse([x - r, y - r, x + r, y + r], fill=col)
+
+
+def _sb_bauteil(e):
+    """Eintrag normalisieren; bei unbekanntem Bauteil abbrechen."""
+    name = str(e.get("bauteil", "")).strip().lower()
+    name = _SB_ALIAS.get(name, name)
+    if name not in _SB_AUSSEN:
+        sys.exit(f"Abbruch: schaltbild — unbekanntes Bauteil '{e.get('bauteil')}'. "
+                 f"Bekannt: {', '.join(_SB_AUSSEN)}")
+    e = dict(e)
+    e["bauteil"] = name
+    if name == "schalter":
+        z = str(e.get("zustand", "offen")).lower()
+        if z not in ("offen", "geschlossen"):
+            sys.exit(f"Abbruch: schaltbild — schalter.zustand '{z}' unbekannt "
+                     "(offen | geschlossen).")
+        e["zustand"] = z
+    return e
+
+
+def _sb_aussen(e):
+    """Ausdehnung nach aussen inkl. Polzeichen und Label (Anzeige-px)."""
+    ext = _SB_AUSSEN[e["bauteil"]]
+    if e["bauteil"] == "quelle" and e.get("pole"):
+        ext = 17
+    return ext
+
+
+def _sb_symbol(fr, e, col, lw, fonts):
+    """Schaltzeichen um den Ursprung des Rahmens; Leitung liegt schon darunter."""
+    name = e["bauteil"]
+    W = "white"
+    f_sym, f_pol = fonts["sym"], fonts["pol"]
+    flip = -1 if e.get("umgekehrt") else 1
+    if name == "leer":
+        return
+    if name == "quelle":
+        n = max(1, int(e.get("zellen", 1)))
+        b = (n - 1) * 8 + 4
+        fr.rect(-b / 2 - 1, -8, b / 2 + 1, 8, fill=W)
+        for i in range(n):
+            c = (i - (n - 1) / 2) * 8
+            # langer Strich = Pluspol, in Umlaufrichtung hinten (links: oben)
+            fr.line([(c + 2 * flip, -7), (c + 2 * flip, 7)], col, lw)
+            fr.line([(c - 2 * flip, -4), (c - 2 * flip, 4)], col, lw * 2)
+        if e.get("pole"):
+            fr.text((b / 2 + 2) * flip, 12, "+", f_pol, col)
+            fr.text(-(b / 2 + 2) * flip, 12, "–", f_pol, col)
+    elif name == "lampe":
+        fr.ellipse(-8, -8, 8, 8, outline=col, width=lw, fill=W)
+        k = 8 * 0.707
+        fr.line([(-k, -k), (k, k)], col, lw)
+        fr.line([(-k, k), (k, -k)], col, lw)
+    elif name in ("amperemeter", "voltmeter", "motor"):
+        fr.ellipse(-8, -8, 8, 8, outline=col, width=lw, fill=W)
+        fr.text(0, 0, {"amperemeter": "A", "voltmeter": "V", "motor": "M"}[name],
+                f_sym, col)
+    elif name in ("widerstand", "sicherung", "widerstand_veraenderbar"):
+        fr.rect(-15, -5.5, 15, 5.5, outline=col, width=lw, fill=W)
+        if name == "sicherung":
+            fr.line([(-15, 0), (15, 0)], col, lw)
+        elif name == "widerstand_veraenderbar":
+            fr.pfeil((-11, -11), (11, 11), col, lw)
+    elif name == "schalter":
+        fr.rect(-11, -2, 11, 10, fill=W)
+        if e["zustand"] == "geschlossen":
+            fr.line([(-10, 0), (10, 0)], col, lw)
+        else:
+            fr.line([(-10, 0), (9, 8)], col, lw)
+        fr.ellipse(-12, -2, -8, 2, fill=col)
+    elif name == "taster":
+        fr.rect(-9, -2, 9, 3, fill=W)
+        fr.line([(-8, 0), (-8, 4)], col, lw)
+        fr.line([(8, 0), (8, 4)], col, lw)
+        fr.line([(-10, 7), (10, 7)], col, lw)
+        fr.line([(0, 7), (0, 13)], col, lw)
+        fr.line([(-5, 13), (5, 13)], col, lw)
+    elif name == "klingel":
+        fr.arc(-9, -9, 9, 9, 0, 180, col, lw)
+    elif name == "summer":
+        fr.arc(-9, -9, 9, 9, 180, 360, col, lw)
+    elif name in ("diode", "led"):
+        fr.polygon([(-6 * flip, -6), (-6 * flip, 6), (6 * flip, 0)], fill=col)
+        fr.line([(6 * flip, -6), (6 * flip, 6)], col, lw)
+        if name == "led":
+            fr.pfeil((-1, 6), (4, 11), col, lw)
+            fr.pfeil((4, 5), (9, 10), col, lw)
+    elif name == "kreuzung":
+        fr.line([(0, -8), (0, 8)], col, lw)
+    elif name == "verbindung":
+        fr.ellipse(-2.5, -2.5, 2.5, 2.5, fill=col)
+    elif name == "klemme":
+        fr.rect(-9, -4, 9, 4, fill=W)
+        fr.ellipse(-11, -3, -5, 3, outline=col, width=lw, fill=W)
+        fr.ellipse(5, -3, 11, 3, outline=col, width=lw, fill=W)
+    # Label nach aussen, immer aufrecht
+    lbl = e.get("label")
+    if lbl not in (None, ""):
+        f = fonts["lbl_i"] if e.get("label_stil") == "kursiv" else fonts["lbl"]
+        anchor = {"oben": "md", "rechts": "lm", "unten": "ma", "links": "rm"}[fr.seite]
+        fr.text(0, _sb_aussen(e) + 3, str(lbl), f, col, anchor)
+
+
+def _sb_items(a):
+    """`reihe` einlesen: Bauteile normalisieren, Gruppen pruefen."""
+    reihe = a.get("reihe")
+    if not isinstance(reihe, list) or not reihe:
+        sys.exit("Abbruch: schaltbild — 'reihe' fehlt oder ist leer.")
+    items = []
+    for it in reihe:
+        if not isinstance(it, dict):
+            sys.exit(f"Abbruch: schaltbild — Eintrag muss ein Mapping sein: {it!r}")
+        if "zweige" in it:
+            zw = it["zweige"]
+            if not isinstance(zw, list) or not zw or not all(isinstance(z, list) and z for z in zw):
+                sys.exit("Abbruch: schaltbild — 'zweige' muss eine Liste nichtleerer Listen sein.")
+            zweige = []
+            for z in zw:
+                bt = []
+                for e in z:
+                    if not isinstance(e, dict) or "zweige" in e:
+                        sys.exit("Abbruch: schaltbild — Zweige duerfen nur Bauteile "
+                                 "enthalten (keine Verschachtelung).")
+                    bt.append(_sb_bauteil(e))
+                zweige.append(bt)
+            g = {"zweige": zweige}
+            if it.get("seite"):
+                g["seite"] = it["seite"]
+            items.append(g)
+        else:
+            items.append(_sb_bauteil(it))
+    return items
+
+
+def _sb_seiten(items):
+    """Seitenzuordnung: entweder alle Eintraege mit `seite` oder automatisch."""
+    pinned = [it.get("seite") for it in items]
+    seiten = {sd: [] for sd in SB_SEITEN}
+    if any(pinned):
+        if not all(pinned):
+            sys.exit("Abbruch: schaltbild — entweder tragen alle Eintraege in "
+                     "'reihe' ein Feld 'seite' oder keiner.")
+        for it in items:
+            sd = str(it["seite"]).lower()
+            if sd not in SB_SEITEN:
+                sys.exit(f"Abbruch: schaltbild — seite '{it['seite']}' unbekannt "
+                         f"({' | '.join(SB_SEITEN)}).")
+            seiten[sd].append(it)
+    else:
+        if "zweige" in items[0]:
+            sys.exit("Abbruch: schaltbild — der erste Eintrag der Reihe darf ohne "
+                     "'seite' keine Zweiggruppe sein (er kommt auf die linke Seite).")
+        seiten["links"].append(items[0])
+        rest = items[1:]
+        gidx = [i for i, it in enumerate(rest) if "zweige" in it]
+        if gidx:
+            g = gidx[0]
+            seiten["oben"], seiten["rechts"], seiten["unten"] = rest[:g], [rest[g]], rest[g + 1:]
+        else:
+            base, extra = divmod(len(rest), 3)
+            n_o = base + (1 if extra >= 1 else 0)
+            n_u = base + (1 if extra >= 2 else 0)
+            seiten["oben"] = rest[:n_o]
+            seiten["rechts"] = rest[n_o:n_o + base]
+            seiten["unten"] = rest[n_o + base:]
+    for sd in ("links", "rechts"):
+        if any("zweige" in it for it in seiten[sd]) and len(seiten[sd]) > 1:
+            sys.exit(f"Abbruch: schaltbild — auf der Seite '{sd}' kann eine "
+                     "Zweiggruppe (Leiter) nicht mit weiteren Bauteilen stehen.")
+    return seiten
+
+
+def gen_schaltbild(a):
+    """
+    breite:       Anzeigebreite px (Default 260); hoehe optional (sonst aus Inhalt)
+    reihe:        Umlauf im Uhrzeigersinn ab links: Bauteile
+                  {bauteil, label, label_stil: kursiv, zustand (schalter),
+                   zellen, pole, umgekehrt (quelle/diode/led), farbe, seite}
+                  oder Zweiggruppen {zweige: [[…], […]], seite}
+    zweigabstand: Abstand paralleler Zweige, Anzeige-px (Default 44)
+    farbe:        Linienfarbe (Default 1A1A1A); je Bauteil ueberschreibbar
+    Bauteile: quelle, lampe, schalter, taster, widerstand,
+      widerstand_veraenderbar (potentiometer), amperemeter, voltmeter, motor,
+      klingel, summer, led, diode, sicherung, kreuzung, verbindung, klemme
+      (offene Stelle), leer (Leitungsstueck). Aliasse siehe _SB_ALIAS.
+    """
+    items = _sb_items(a)
+    seiten = _sb_seiten(items)
+    W_PT = int(a.get("breite", 260))
+    dz = a.get("zweigabstand", 44)
+    dark = farbe(a.get("farbe"), (26, 26, 26))
+    lw = int(1.6 * SCALE)
+    fonts = {"lbl": font("regular", 8), "lbl_i": font("italic", 8),
+             "sym": font("bold", 10), "pol": font("bold", 9)}
+    probe = ImageDraw.Draw(Image.new("RGB", (10, 10), "white"))
+
+    def label_w(e):
+        lbl = e.get("label")
+        if lbl in (None, ""):
+            return 0
+        f = fonts["lbl_i"] if e.get("label_stil") == "kursiv" else fonts["lbl"]
+        return probe.textlength(str(lbl), font=f) / SCALE
+
+    def ext_h(e):                       # Ausdehnung nach aussen, waagerechte Seite
+        return _sb_aussen(e) + (3 + _SB_LABEL_H if label_w(e) else 0)
+
+    def ext_v(e):                       # Ausdehnung nach aussen, senkrechte Seite
+        return _sb_aussen(e) + (3 + label_w(e) if label_w(e) else 0)
+
+    # --- Raender aus dem Inhalt
+    leiter = {}                          # senkrechte Seite -> Zweigzahl (Leiter)
+    for sd in ("links", "rechts"):
+        for it in seiten[sd]:
+            if "zweige" in it:
+                leiter[sd] = len(it["zweige"])
+    pad = {}
+    for sd in SB_SEITEN:
+        ext = 0
+        for it in seiten[sd]:
+            if "zweige" in it:
+                if sd in ("oben", "unten"):
+                    aussen_zweig = it["zweige"][-1]
+                    ext = max(ext, (len(it["zweige"]) - 1) * dz +
+                              max(ext_h(e) for e in aussen_zweig))
+                else:
+                    ext = max(ext, max(ext_v(e) for e in it["zweige"][0]))
+            else:
+                ext = max(ext, ext_h(it) if sd in ("oben", "unten") else ext_v(it))
+        pad[sd] = max(22, SB_RAND + ext)
+
+    rect_w = W_PT - pad["links"] - pad["rechts"]
+
+    # --- Platzbedarf entlang der Seiten
+    def slot(it):
+        if "zweige" in it:
+            n = max(len(z) for z in it["zweige"])
+            return 2 * SB_GRUPPE_RAND + n * SB_SLOT
+        return SB_SLOT
+
+    need_v = 2 * SB_ECKE
+    for sd in ("links", "rechts"):
+        for it in seiten[sd]:
+            if "zweige" in it:
+                need_v = max(need_v, 2 * SB_ECKE + max(len(z) for z in it["zweige"]) * SB_SLOT)
+            else:
+                need_v = max(need_v, 2 * SB_ECKE + len(seiten[sd]) * SB_SLOT)
+    if "hoehe" in a:
+        rect_h = int(a["hoehe"]) - pad["oben"] - pad["unten"]
+    else:
+        rect_h = max(int(0.55 * rect_w), need_v, 60)
+    if rect_h < need_v:
+        sys.exit(f"Abbruch: schaltbild — hoehe {a.get('hoehe')} zu klein, "
+                 f"mindestens {need_v + pad['oben'] + pad['unten']} noetig.")
+
+    # nutzbarer Bereich je Seite (Leiter auf links/rechts rueckt die Enden ein)
+    off_l = (leiter.get("links", 1) - 1) * dz
+    off_r = (leiter.get("rechts", 1) - 1) * dz
+    bereich = {
+        "oben": (SB_ECKE + off_l, rect_w - SB_ECKE - off_r),
+        "unten": (SB_ECKE + off_r, rect_w - SB_ECKE - off_l),
+        "links": (SB_ECKE, rect_h - SB_ECKE),
+        "rechts": (SB_ECKE, rect_h - SB_ECKE),
+    }
+    for sd in SB_SEITEN:
+        its = [it for it in seiten[sd] if not ("zweige" in it and sd in ("links", "rechts"))]
+        bedarf = sum(slot(it) for it in its)
+        frei = bereich[sd][1] - bereich[sd][0]
+        if bedarf > frei:
+            sys.exit(f"Abbruch: schaltbild — Seite '{sd}' zu kurz ({frei:.0f} px "
+                     f"frei, {bedarf} px noetig); breite/hoehe erhoehen oder "
+                     "Bauteile anders verteilen.")
+
+    # --- Bild und Rechteck
+    W = s(W_PT)
+    H = s(pad["oben"] + rect_h + pad["unten"])
+    img = Image.new("RGB", (W, H), "white")
+    d = ImageDraw.Draw(img)
+    x0, y0 = s(pad["links"]), s(pad["oben"])
+    x1, y1 = x0 + s(rect_w), y0 + s(rect_h)
+    _sb_draht(d, x0, y0, x1, y0, lw, dark)
+    _sb_draht(d, x1, y0, x1, y1, lw, dark)
+    _sb_draht(d, x1, y1, x0, y1, lw, dark)
+    _sb_draht(d, x0, y1, x0, y0, lw, dark)
+    # Umlaufrahmen je Seite: Ursprung am Seitenanfang (Uhrzeigersinn)
+    start = {"oben": (x0, y0), "rechts": (x1, y0), "unten": (x1, y1), "links": (x0, y1)}
+    laenge = {"oben": rect_w, "unten": rect_w, "links": rect_h, "rechts": rect_h}
+
+    zeichnen = []                        # (Rahmen, Bauteil) — nach den Leitungen
+
+    def platziere(sd, its, t0, t1, v):
+        """Bauteile `its` gleichmaessig zwischen t0 und t1 auf Hoehe v."""
+        fr = _SbRahmen(d, sd, *start[sd])
+        bedarf = sum(slot(it) for it in its)
+        luecke = (t1 - t0 - bedarf) / (len(its) + 1)
+        t = t0
+        for it in its:
+            t += luecke
+            mitte = t + slot(it) / 2
+            if "zweige" in it:           # Schleife nach aussen (waagerechte Seite)
+                ta, tb = t + 4, t + slot(it) - 4
+                k = len(it["zweige"])
+                for j in range(1, k):
+                    _sb_draht(d, *fr.p(ta, j * dz), *fr.p(tb, j * dz), lw, dark)
+                if k > 1:
+                    _sb_draht(d, *fr.p(ta, 0), *fr.p(ta, (k - 1) * dz), lw, dark)
+                    _sb_draht(d, *fr.p(tb, 0), *fr.p(tb, (k - 1) * dz), lw, dark)
+                    _sb_knoten(d, *fr.p(ta, 0), dark)
+                    _sb_knoten(d, *fr.p(tb, 0), dark)
+                for j, zweig in enumerate(it["zweige"]):
+                    platziere(sd, zweig, t + SB_GRUPPE_RAND, t + slot(it) - SB_GRUPPE_RAND, v + j * dz)
+            else:
+                cx, cy = fr.p(mitte, v)
+                zeichnen.append((_SbRahmen(d, sd, cx, cy), it))
+            t += slot(it)
+
+    for sd in SB_SEITEN:
+        its = seiten[sd]
+        if sd in ("links", "rechts") and its and "zweige" in its[0]:
+            # Leiter: Zweig 0 ist die Seite selbst, weitere nach innen
+            fr = _SbRahmen(d, sd, *start[sd])
+            L = laenge[sd]
+            for j, zweig in enumerate(its[0]["zweige"]):
+                if j:
+                    _sb_draht(d, *fr.p(0, -j * dz), *fr.p(L, -j * dz), lw, dark)
+                    _sb_knoten(d, *fr.p(0, -j * dz), dark)
+                    _sb_knoten(d, *fr.p(L, -j * dz), dark)
+                platziere(sd, zweig, *bereich[sd], -j * dz)
+        else:
+            platziere(sd, its, *bereich[sd], 0)
+
+    for fr, e in zeichnen:
+        _sb_symbol(fr, e, farbe(e.get("farbe"), dark), lw, fonts)
+    return img
+
+
 GENERATOREN = {
     "scaffold": gen_scaffold,
     "balkenraster": gen_balkenraster,
@@ -583,6 +1033,7 @@ GENERATOREN = {
     "stromkreis": gen_stromkreis,
     "kennlinien": gen_kennlinien,
     "bilddatei": gen_bilddatei,
+    "schaltbild": gen_schaltbild,
 }
 
 
