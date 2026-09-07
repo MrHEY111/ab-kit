@@ -1,7 +1,7 @@
 # AB-Kit — Arbeitsblätter und Lösungen aus einer Spec
 
-Kit-Version: siehe `KIT_VERSION` · Stand 06.09.2026 · Repo: `https://github.com/mrhey111/ab-kit` (öffentlich, kanonisch) · Arbeitskopie Windows: `C:\dev\ab_kit\` (Klon)
-<!-- schema-bindung: v1.14 (2026-09-03) -->
+Kit-Version: siehe `KIT_VERSION` · Stand 07.09.2026 · Repo: `https://github.com/mrhey111/ab-kit` (öffentlich, kanonisch) · Arbeitskopie Windows: `C:\dev\ab_kit\` (Klon)
+<!-- schema-bindung: v1.15 (2026-09-07) -->
 
 Ein Renderer, alle Unterschiede zwischen Blättern stehen in der Spec. Pro
 Arbeitsblatt oder Erwartungshorizont gibt es genau eine Textdatei
