@@ -29,7 +29,9 @@
  * Aufgabenzitate (Kit 1.5): Eine Loesungs-Spec mit `ab_spec: <AB-Spec>` (Pfad
  * relativ zum Spec-Ordner) laesst `aufgabe`-Elemente mit `zitat: true` und
  * ohne `text` ihren Wortlaut aus der Aufgabe gleicher `nr` des Arbeitsblatts
- * holen. Vorhandener `text` gewinnt. Siehe zitateAufloesen().
+ * holen. Kit 1.6: ebenso `teilaufgabe` mit `zitat: true` und `buchstabe`,
+ * gematcht unter der vorangehenden aufgabe gleicher `nr`. Vorhandener `text`
+ * gewinnt. Siehe zitateAufloesen().
  *
  * Fallen, die hier gekapselt sind (README.md fuehrt die Liste):
  *   - kein spacing.line im Default-Style (schneidet Bilder ab)
@@ -557,8 +559,11 @@ ELEMENTE.teilaufgabe = (e) => [new Paragraph({
   spacing: { before: e.vor ?? 40, after: e.nach ?? 30 },
   indent: { left: e.einzug ?? 220 },
   children: [
-    run(`${e.buchstabe})  `, { fett: true, groesse: e.groesse ?? ST.anweisung_groesse }),
-    ...runs(e.text, { groesse: e.groesse ?? ST.anweisung_groesse, kursiv: e.kursiv }),
+    run(`${e.buchstabe})  `, { fett: true, groesse: e.groesse ?? ST.anweisung_groesse,
+      ...(e.zitat ? { farbe: "grau" } : {}) }),
+    ...runs(e.text, e.zitat
+      ? { kursiv: true, farbe: "grau", groesse: e.groesse ?? ST.anweisung_groesse }
+      : { groesse: e.groesse ?? ST.anweisung_groesse, kursiv: e.kursiv }),
   ],
 })];
 
@@ -911,35 +916,59 @@ function elementeFlach(liste) {
 // (elementeFlach). Doppelte `nr` im Arbeitsblatt sind ein Abbruch: die erste
 // stillschweigend zu nehmen waere genau die Drift, die das Feld verhindert.
 
+// Teilaufgaben (Kit 1.6) haengen an der zuletzt gesehenen aufgabe derselben
+// Seite: Schluessel `<nr>|<buchstabe>`. Eine teilaufgabe vor der ersten aufgabe
+// einer Seite hat keinen Anker und wird nicht indiziert.
 function aufgabenIndex(spec) {
   const index = new Map();
+  const teile = new Map();
   const doppelt = new Set();
   (spec.seiten || []).forEach((seite, si) => {
+    let nrAktuell = null;
     elementeFlach(seite.elemente).forEach((e) => {
-      if (e.typ !== "aufgabe" || e.nr == null) return;
-      const nr = String(e.nr).trim();
-      if (index.has(nr)) doppelt.add(nr);
-      else index.set(nr, { text: e.text, seite: si + 1 });
+      if (e.typ === "aufgabe" && e.nr != null) {
+        const nr = String(e.nr).trim();
+        nrAktuell = nr;
+        if (index.has(nr)) doppelt.add(`nr "${nr}"`);
+        else index.set(nr, { text: e.text, seite: si + 1 });
+      } else if (e.typ === "teilaufgabe" && e.buchstabe != null && nrAktuell != null) {
+        const b = String(e.buchstabe).trim();
+        const k = `${nrAktuell}|${b}`;
+        if (teile.has(k)) doppelt.add(`nr "${nrAktuell}" ${b})`);
+        else teile.set(k, { text: e.text, seite: si + 1 });
+      }
     });
   });
-  return { index, doppelt };
+  return { index, teile, doppelt };
 }
 
 function zitateAufloesen(spec, specPfad) {
   const offen = [];
   (spec.seiten || []).forEach((seite, si) => {
+    let nrAktuell = null;
     elementeFlach(seite.elemente).forEach((e) => {
+      if (e.typ === "aufgabe" && e.nr != null) nrAktuell = String(e.nr).trim();
       if (e.typ === "aufgabe" && e.zitat && e.text == null) offen.push({ e, seite: si + 1 });
+      if (e.typ === "teilaufgabe" && e.zitat && e.text == null)
+        offen.push({ e, seite: si + 1, nr: nrAktuell });
     });
   });
   if (!offen.length) return 0;
 
-  const wo = (o) => `Seite ${o.seite}, nr ${o.e.nr == null ? "(fehlt)" : `"${String(o.e.nr).trim()}"`}`;
-  const ohneNr = offen.find((o) => o.e.nr == null);
+  const wo = (o) => {
+    if (o.e.typ === "teilaufgabe")
+      return `Seite ${o.seite}, teilaufgabe ${o.e.buchstabe == null ? "(ohne buchstabe)" : `${String(o.e.buchstabe).trim()})`}`
+        + ` unter nr ${o.nr == null ? "(keine aufgabe davor)" : `"${o.nr}"`}`;
+    return `Seite ${o.seite}, nr ${o.e.nr == null ? "(fehlt)" : `"${String(o.e.nr).trim()}"`}`;
+  };
+  const ohneNr = offen.find((o) => o.e.typ === "aufgabe" && o.e.nr == null);
   if (ohneNr)
     fehler(`aufgabe mit zitat: true ohne text braucht nr, um zitiert zu werden (${wo(ohneNr)}).`);
+  const teilOhne = offen.find((o) => o.e.typ === "teilaufgabe" && (o.e.buchstabe == null || o.nr == null));
+  if (teilOhne)
+    fehler(`teilaufgabe mit zitat: true ohne text braucht buchstabe und eine aufgabe mit nr davor (${wo(teilOhne)}).`);
   if (spec.ab_spec == null)
-    fehler(`aufgabe mit zitat: true ohne text (${wo(offen[0])}) — dafuer muss die Spec `
+    fehler(`${offen[0].e.typ} mit zitat: true ohne text (${wo(offen[0])}) — dafuer muss die Spec `
       + `ab_spec: <AB-Spec> tragen (Pfad relativ zum Spec-Ordner).`);
 
   const abPfad = path.resolve(path.dirname(specPfad), String(spec.ab_spec));
@@ -949,22 +978,41 @@ function zitateAufloesen(spec, specPfad) {
   if (!ab || !Array.isArray(ab.seiten))
     fehler(`ab_spec ohne seiten-Liste: ${abPfad}`);
 
-  const { index, doppelt } = aufgabenIndex(ab);
+  const { index, teile, doppelt } = aufgabenIndex(ab);
   if (doppelt.size)
-    fehler(`ab_spec ${path.basename(abPfad)} fuehrt nr mehrfach: `
-      + `${[...doppelt].map((n) => `"${n}"`).join(", ")} — Zitat waere nicht eindeutig.`);
+    fehler(`ab_spec ${path.basename(abPfad)} fuehrt mehrfach: `
+      + `${[...doppelt].join(", ")} — Zitat waere nicht eindeutig.`);
   const vorhanden = () => (index.size
     ? [...index.keys()].map((n) => `"${n}"`).join(", ")
     : "keine");
+  const vorhandeneTeile = (nr) => {
+    const bs = [...teile.keys()].filter((k) => k.startsWith(`${nr}|`)).map((k) => `${k.split("|")[1]})`);
+    return bs.length ? bs.join(", ") : "keine";
+  };
 
+  const abName = path.basename(abPfad);
   offen.forEach((o) => {
+    if (o.e.typ === "teilaufgabe") {
+      const b = String(o.e.buchstabe).trim();
+      if (!index.has(o.nr))
+        fehler(`ab_spec ${abName} hat keine Aufgabe mit nr "${o.nr}" `
+          + `(zitiert in ${wo(o)}). Vorhandene Nummern: ${vorhanden()}.`);
+      const treffer = teile.get(`${o.nr}|${b}`);
+      if (!treffer)
+        fehler(`ab_spec ${abName} hat unter nr "${o.nr}" keine teilaufgabe ${b}) `
+          + `(zitiert in ${wo(o)}). Vorhandene Teilaufgaben dort: ${vorhandeneTeile(o.nr)}.`);
+      if (treffer.text == null)
+        fehler(`ab_spec ${abName}: teilaufgabe ${b}) unter nr "${o.nr}" hat keinen text (zitiert in ${wo(o)}).`);
+      o.e.text = treffer.text;
+      return;
+    }
     const nr = String(o.e.nr).trim();
     const treffer = index.get(nr);
     if (!treffer)
-      fehler(`ab_spec ${path.basename(abPfad)} hat keine Aufgabe mit nr "${nr}" `
+      fehler(`ab_spec ${abName} hat keine Aufgabe mit nr "${nr}" `
         + `(zitiert in ${wo(o)}). Vorhandene Nummern: ${vorhanden()}.`);
     if (treffer.text == null)
-      fehler(`ab_spec ${path.basename(abPfad)}: Aufgabe nr "${nr}" hat keinen text `
+      fehler(`ab_spec ${abName}: Aufgabe nr "${nr}" hat keinen text `
         + `(zitiert in ${wo(o)}).`);
     o.e.text = treffer.text;
   });

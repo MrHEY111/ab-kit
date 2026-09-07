@@ -183,7 +183,7 @@ Alle Profilwerte lassen sich unter `stil:` einzeln überschreiben
 | `loesung` | `text` | Lösungsabsatz mit Marker |
 | `stundenfrage` | `modus: fest\|platzhalter`, `text`, `hoehe`, `zeilen`, `label`, `sperrung`, `staerke`, `rahmen` | K-008: Platzhalter zum Selbsteintragen; Profil-Defaults `stundenfrage_label/_sperrung/_fett/_staerke/_rahmen` |
 | `ritual` | `kanon: vermuten\|punkt`, `label`, `zusatz`, `zusatz_inline` | 🔮 / 🎯, Wortlaut aus dem Profil; `label: ""` = ohne Label (Layout_wh) |
-| `teilaufgabe` | `buchstabe`, `text`, `einzug` | a) / b) unter einer Aufgabe |
+| `teilaufgabe` | `buchstabe`, `text`, `zitat`, `einzug` | a) / b) unter einer Aufgabe; `zitat: true` = AB-Wortlaut grau-kursiv (Lösung), ohne `text` aus `ab_spec` gezogen — gematcht über `buchstabe` unter der vorangehenden `aufgabe` (Kit 1.6) |
 | `ankreuzen` | `optionen: []`, `einzug` | ☐-Zeilen |
 | `zitat` | `text`, `einzug` | wörtlicher AB-Text in der Lösung, grau-kursiv |
 | `raster` / `tabelle` | `spalten: [{kopf, breite, ausrichtung}]`, `zeilen`, `zeilenhoehe`, `gruppen`, `luecke`, `kopf_fuellung` | `zeilen`-Eintrag: String (Label 1. Spalte) oder Liste von Zellen; Zelle: String oder `{text, fett, farbe}`; `gruppen` = Tabellen nebeneinander |
@@ -312,11 +312,20 @@ Ein `aufgabe`-Element mit `zitat: true` und **ohne** `text` holt seinen
 Wortlaut aus der Aufgabe gleicher `nr` der referenzierten Spec. Ein
 vorhandener `text` gewinnt — Bestandsspecs bleiben unverändert.
 
+Seit Kit 1.6 gilt dasselbe für `teilaufgabe`: `{typ: teilaufgabe, buchstabe: a,
+zitat: true}` holt den Text der Teilaufgabe `a` **unter der vorangehenden
+`aufgabe`** gleicher `nr` — in der Lösung wie im Arbeitsblatt zählt jeweils
+die zuletzt gesehene `aufgabe` derselben Seite als Anker. Damit ist auch
+a)/b) driftfrei, nicht nur der Aufgabenstamm.
+
 Regeln:
 
 - `nr` wird als Zeichenkette zeichengenau verglichen, nicht als Zahl
   (`AB_Messen_GR` führt `nr: "1 + 2"`).
 - Aufgaben innerhalb von `nebeneinander` zählen mit.
+- Eine `teilaufgabe` ohne `aufgabe` davor auf derselben Seite hat keinen
+  Anker: Abbruch. Fehlt der Buchstabe unter der Aufgabe im Blatt: Abbruch
+  mit der Liste der dort vorhandenen Teilaufgaben.
 - Fehlt die Nummer im Arbeitsblatt: Abbruch mit der Liste der vorhandenen
   Nummern.
 - Führt das Arbeitsblatt eine `nr` doppelt: Abbruch. Stillschweigend die
@@ -418,6 +427,16 @@ Seite 2 mit elf Befunden).
 
 ## Änderungsprotokoll
 
+- **1.6 (07.09.2026)** — `teilaufgabe` zitiert wie `aufgabe`: `zitat: true` ohne
+  `text`, aber mit `buchstabe`, holt den Wortlaut aus `ab_spec`, gematcht unter
+  der vorangehenden `aufgabe` gleicher `nr` (Anker = zuletzt gesehene Aufgabe
+  derselben Seite, in Lösung und Blatt gleichermaßen). Gleicher Buchstabe unter
+  verschiedenen Nummern bleibt eindeutig; doppelter Buchstabe unter derselben
+  Nummer im Blatt = Abbruch, fehlender Anker = Abbruch. Zitierte Teilaufgaben
+  rendern grau-kursiv wie das Aufgabenzitat. Anlass: `Loesung_Reihenschaltung`
+  nr 3 — nach der Verdrahtung mit 1.5 standen a) und b) wieder als Kopie von
+  Hand da, dieselbe Drift eine Ebene tiefer. Bestehende Specs laufen
+  unverändert (Minor); ohne `zitat` rendert `teilaufgabe` wie bisher.
 - **1.5 (07.09.2026)** — Neues Spec-Feld `ab_spec` für Lösungs-Specs: ein
   `aufgabe`-Element mit `zitat: true` und ohne `text`, aber mit `nr`, holt
   seinen Wortlaut aus der Aufgabe gleicher `nr` der referenzierten AB-Spec
