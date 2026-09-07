@@ -132,6 +132,8 @@ zweig: GR                   # Pflicht — GR | G | R | H | LK (Lösung)
 ausgabe: AB_Wasserbestandteile_GR.docx   # Pflicht — Dateiname der Ausgabe
 stand: 2026-09-03           # Pflicht — ISO, Stand dieser Spec
 version: "2.2"              # optional — Materialversion (Blueprint-Bezug)
+ab_spec: AB_Wasser_GR.spec.yaml   # optional (Kit 1.5) — nur `dokumenttyp: loesung`:
+                            # Quelle für Aufgabenzitate, relativ zum Spec-Ordner
 stil:                       # optional — Profil + Überschreibungen
   profil: kompakt           # kompakt | kanon | loesung-kompakt | loesung-kanon
   rand: {oben: 850, unten: 850, links: 850, rechts: 850}
@@ -175,7 +177,7 @@ Alle Profilwerte lassen sich unter `stil:` einzeln überschreiben
 | `titel` | `text`, `untertitel`, `linie` | |
 | `abschnitt` | `text`, `umbruch` | unnummerierter Kopf (Stundenfrage, Sprinteraufgabe, …) |
 | `ueberschrift` | `text`, `ebene: 1\|2` | Lösungen |
-| `aufgabe` | `nr`, `text`, `zitat`, `unterzeile`, `umbruch`, `afb`, `bezug` | `zitat: true` = AB-Wortlaut grau-kursiv (Lösung); `afb: I\|II\|III` und `bezug` (Einstieg, Simulation, Versuch, …) werden nicht gerendert, nur vom Bauplan-Check gelesen |
+| `aufgabe` | `nr`, `text`, `zitat`, `unterzeile`, `umbruch`, `afb`, `bezug` | `zitat: true` = AB-Wortlaut grau-kursiv (Lösung), ohne `text` wird er aus `ab_spec` gezogen (siehe Aufgabenzitate); `afb: I\|II\|III` und `bezug` (Einstieg, Simulation, Versuch, …) werden nicht gerendert, nur vom Bauplan-Check gelesen |
 | `anweisung` / `text` | `text`, `groesse`, `fett`, `kursiv`, `farbe`, `vor`, `nach`, `einzug`, `ausrichtung` | |
 | `stichpunkte` | `punkte: []` | Aufzählung |
 | `loesung` | `text` | Lösungsabsatz mit Marker |
@@ -289,6 +291,39 @@ Testfälle mit den vier Akzeptanzplänen (PH-08.STK-B6 Reihenschaltung, B7
 Parallelschaltung, B5 Prüfstromkreis, PH-10.SGE-B3 nachgebaut) und einem
 Bauteilkatalog: `_build\specs\schaltbild_test.spec.yaml`.
 
+## Aufgabenzitate aus der AB-Spec (Kit 1.5)
+
+Im Erwartungshorizont steht der Aufgabentext noch einmal, grau-kursiv
+(`zitat: true`). Bisher war das eine Kopie von Hand — änderte sich der
+Wortlaut auf dem Blatt, lief die Lösung stillschweigend hinterher.
+
+Eine Lösungs-Spec kann die AB-Spec deshalb benennen:
+
+```yaml
+dokumenttyp: loesung
+ab_spec: AB_Kennlinie_GR.spec.yaml     # relativ zum Ordner der Lösungs-Spec
+seiten:
+  - elemente:
+      - {typ: aufgabe, nr: "2", zitat: true}     # Text kommt aus dem AB
+      - {typ: loesung, text: "…"}
+```
+
+Ein `aufgabe`-Element mit `zitat: true` und **ohne** `text` holt seinen
+Wortlaut aus der Aufgabe gleicher `nr` der referenzierten Spec. Ein
+vorhandener `text` gewinnt — Bestandsspecs bleiben unverändert.
+
+Regeln:
+
+- `nr` wird als Zeichenkette zeichengenau verglichen, nicht als Zahl
+  (`AB_Messen_GR` führt `nr: "1 + 2"`).
+- Aufgaben innerhalb von `nebeneinander` zählen mit.
+- Fehlt die Nummer im Arbeitsblatt: Abbruch mit der Liste der vorhandenen
+  Nummern.
+- Führt das Arbeitsblatt eine `nr` doppelt: Abbruch. Stillschweigend die
+  erste zu nehmen wäre genau die Drift, die das Feld verhindern soll.
+- Die Auflösung läuft auch bei `--check`. `bau.ps1` prüft vor dem Bau,
+  Drift fällt also auf, bevor irgendetwas geschrieben wird.
+
 ## Bauplan-Check (Kit 1.2)
 
 Jedes Arbeitsblatt (`dokumenttyp: ab`) wird beim Bau und bei `--check` gegen
@@ -383,6 +418,47 @@ Seite 2 mit elf Befunden).
 
 ## Änderungsprotokoll
 
+- **1.5 (07.09.2026)** — Neues Spec-Feld `ab_spec` für Lösungs-Specs: ein
+  `aufgabe`-Element mit `zitat: true` und ohne `text`, aber mit `nr`, holt
+  seinen Wortlaut aus der Aufgabe gleicher `nr` der referenzierten AB-Spec
+  (Pfad relativ zum Spec-Ordner). AB-Änderungen schlagen damit beim nächsten
+  Bau in die Lösung durch, Wortlaut-Drift zwischen Blatt und Erwartungs-
+  horizont ist ausgeschlossen. Vorhandener `text` gewinnt. `nr` wird
+  zeichengenau als Zeichenkette verglichen (`AB_Messen_GR` führt `nr: "1 + 2"`),
+  Aufgaben in `nebeneinander` zählen mit; fehlende Nummer = Abbruch mit der
+  Liste der vorhandenen Nummern, doppelte `nr` im AB ebenfalls Abbruch. Läuft
+  auch bei `--check`, `bau.ps1` fängt Drift also vor dem Bau ab. Anlass:
+  PH-10.SGE-B3/B4 — die Teilung des Blattes am 07.09.2026 kostete drei Runden
+  Handnachzug an Zitaten. Geprüft: alle vierzehn Archiv-Specs bauen mit 1.5
+  ein zu 1.4 identisches `word/document.xml` (einzige Abweichung ist der
+  Ritual-Wortlaut desselben Tages, siehe Eintrag unten). Bestehende Specs mit
+  `kit_version: "1.2"` bis `"1.4"` laufen unverändert (Minor).
+- **`bau.ps1` (07.09.2026), Kit-Version unverändert 1.4** — Die Ablage in den
+  Blockordner hält gesperrte Zieldateien aus. Bisher warf `Copy-Item` unter
+  `$ErrorActionPreference = "Stop"` bei einer gesperrten Ziel-PDF (Google Drive
+  Desktop, Explorer-Vorschaubereich) einen terminierenden Fehler und beendete
+  damit die gesamte `foreach`-Schleife über die Specs — bei einem Aufruf mit
+  zwei Specs wurde die zweite nie gebaut, ohne erkennbare Meldung. Jetzt:
+  Kopieren mit Wiederholung (`Copy-MitWiederholung`, 10 Versuche im Abstand
+  von 700 ms — Sync-Sperren lösen sich meist in wenigen Sekunden), bei
+  dauerhafter Sperre Warnung mit Quellpfad in `_build\<Stamm>\` zum
+  Kopieren von Hand und ausdrücklichem Hinweis, dass docx und PDF im
+  Blockordner auseinanderlaufen können (neue docx neben alter PDF), danach
+  weiter mit der nächsten Spec. Ebenfalls entschärft: `Resolve-Path` auf einen
+  nicht existierenden Pfad und `Select-String` auf die Spec brachen die
+  Schleife bisher genauso hart ab. Am Ende listet der Lauf die Specs auf, die
+  nicht vollständig abgelegt wurden; der Exitcode zählt weiter die Probleme.
+- **Ritual-Wortlaut (07.09.2026), Kit-Version unverändert 1.4** —
+  `ritual_punkt` lautet in den Profilen `kanon` und `kompakt` jetzt
+  „… in meinen eigenen Worten zusammen." statt
+  „… in meinen eigenen Worten.".
+  Reiner Wortlaut, keine Schnittstelle: Specs, Elementtypen und Stilfelder
+  bleiben unberührt, bestehende Specs laufen ohne Änderung. Aber: der Neubau
+  eines AB mit `ritual kanon: punkt` ändert dessen Ausgabe — docx und PDF im
+  Blockordner weichen danach vom bisherigen Stand ab. Zeilenlage geprüft:
+  der längere Satz bleibt in beiden Profilen einzeilig (kanon im Kasten
+  ca. 290 pt bei ca. 489 pt Satzbreite, kompakt als schlichte Zeile ca. 293 pt
+  bei ca. 510 pt).
 - **1.4 (06.09.2026)** — Neuer Asset-Typ `schaltbild` in `ab_assets.py`:
   Schaltplan aus deklarativer Beschreibung (Bauteilliste `reihe`, parallele
   `zweige`), 18 Schaltzeichen nach DIN EN 60617, automatische oder explizite

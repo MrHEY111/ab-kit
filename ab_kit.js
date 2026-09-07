@@ -26,6 +26,11 @@
  * Pflichtfelder der Spec: kit_version, block, titel, zweig, ausgabe, stand,
  * seiten. Elementtypen: siehe ELEMENTE unten; unbekannter Typ = Abbruch.
  *
+ * Aufgabenzitate (Kit 1.5): Eine Loesungs-Spec mit `ab_spec: <AB-Spec>` (Pfad
+ * relativ zum Spec-Ordner) laesst `aufgabe`-Elemente mit `zitat: true` und
+ * ohne `text` ihren Wortlaut aus der Aufgabe gleicher `nr` des Arbeitsblatts
+ * holen. Vorhandener `text` gewinnt. Siehe zitateAufloesen().
+ *
  * Fallen, die hier gekapselt sind (README.md fuehrt die Liste):
  *   - kein spacing.line im Default-Style (schneidet Bilder ab)
  *   - leerer Absatz nach jeder Tabelle (LibreOffice verschmilzt sonst
@@ -88,7 +93,7 @@ const PROFILE = {
     zelle: { oben: 80, unten: 80, links: 120, rechts: 120 },
     rahmen_staerke: 4, rahmen_farbe: "rahmen",
     ritual_vermuten: "Ich vermute zuerst \u2013 dann pr\u00fcfe ich.",
-    ritual_punkt: "Auf den Punkt \u2014 ich fasse es in meinen eigenen Worten.",
+    ritual_punkt: "Auf den Punkt \u2014 ich fasse es in meinen eigenen Worten zusammen.",
   },
   // PH-10.SGE · AB_Widerstand_GR (Layout_wh.js-Kanon, 19./30.08.2026)
   kanon: {
@@ -103,7 +108,7 @@ const PROFILE = {
     zelle: { oben: 70, unten: 70, links: 110, rechts: 110 },
     rahmen_staerke: 4, rahmen_farbe: "hellgrau",
     ritual_vermuten: "Ich vermute zuerst \u2013 dann pr\u00fcfe ich.",
-    ritual_punkt: "Ich fasse es in meinen eigenen Worten.",
+    ritual_punkt: "Ich fasse es in meinen eigenen Worten zusammen.",
     ritual_label_vermuten: "Vermuten\u2013Pr\u00fcfen",
     ritual_label_punkt: "Auf den Punkt",
   },
@@ -892,6 +897,80 @@ function elementeFlach(liste) {
   return out;
 }
 
+/* ======================== Aufgabenzitate aus der AB-Spec (Kit 1.5) ======== */
+// Eine Loesungs-Spec kann mit `ab_spec:` auf die Spec des Arbeitsblatts zeigen
+// (Pfad relativ zum Ordner der Loesungs-Spec). Ein `aufgabe`-Element mit
+// `zitat: true` und ohne `text`, aber mit `nr`, holt seinen Wortlaut dann aus
+// der Aufgabe gleicher `nr` des Arbeitsblatts. Aenderungen am AB schlagen so
+// beim naechsten Bau in die Loesung durch; Wortlaut-Drift zwischen Blatt und
+// Erwartungshorizont ist ausgeschlossen. Ein vorhandener `text` gewinnt -
+// Bestandsspecs bleiben unveraendert.
+//
+// `nr` ist eine Zeichenkette, keine Zahl (AB_Messen_GR fuehrt `nr: "1 + 2"`),
+// und wird zeichengenau verglichen. Aufgaben in `nebeneinander` zaehlen mit
+// (elementeFlach). Doppelte `nr` im Arbeitsblatt sind ein Abbruch: die erste
+// stillschweigend zu nehmen waere genau die Drift, die das Feld verhindert.
+
+function aufgabenIndex(spec) {
+  const index = new Map();
+  const doppelt = new Set();
+  (spec.seiten || []).forEach((seite, si) => {
+    elementeFlach(seite.elemente).forEach((e) => {
+      if (e.typ !== "aufgabe" || e.nr == null) return;
+      const nr = String(e.nr).trim();
+      if (index.has(nr)) doppelt.add(nr);
+      else index.set(nr, { text: e.text, seite: si + 1 });
+    });
+  });
+  return { index, doppelt };
+}
+
+function zitateAufloesen(spec, specPfad) {
+  const offen = [];
+  (spec.seiten || []).forEach((seite, si) => {
+    elementeFlach(seite.elemente).forEach((e) => {
+      if (e.typ === "aufgabe" && e.zitat && e.text == null) offen.push({ e, seite: si + 1 });
+    });
+  });
+  if (!offen.length) return 0;
+
+  const wo = (o) => `Seite ${o.seite}, nr ${o.e.nr == null ? "(fehlt)" : `"${String(o.e.nr).trim()}"`}`;
+  const ohneNr = offen.find((o) => o.e.nr == null);
+  if (ohneNr)
+    fehler(`aufgabe mit zitat: true ohne text braucht nr, um zitiert zu werden (${wo(ohneNr)}).`);
+  if (spec.ab_spec == null)
+    fehler(`aufgabe mit zitat: true ohne text (${wo(offen[0])}) — dafuer muss die Spec `
+      + `ab_spec: <AB-Spec> tragen (Pfad relativ zum Spec-Ordner).`);
+
+  const abPfad = path.resolve(path.dirname(specPfad), String(spec.ab_spec));
+  let ab;
+  try { ab = YAML.parse(fs.readFileSync(abPfad, "utf8")); }
+  catch (err) { fehler(`ab_spec nicht lesbar: ${abPfad} (${err.message})`); }
+  if (!ab || !Array.isArray(ab.seiten))
+    fehler(`ab_spec ohne seiten-Liste: ${abPfad}`);
+
+  const { index, doppelt } = aufgabenIndex(ab);
+  if (doppelt.size)
+    fehler(`ab_spec ${path.basename(abPfad)} fuehrt nr mehrfach: `
+      + `${[...doppelt].map((n) => `"${n}"`).join(", ")} — Zitat waere nicht eindeutig.`);
+  const vorhanden = () => (index.size
+    ? [...index.keys()].map((n) => `"${n}"`).join(", ")
+    : "keine");
+
+  offen.forEach((o) => {
+    const nr = String(o.e.nr).trim();
+    const treffer = index.get(nr);
+    if (!treffer)
+      fehler(`ab_spec ${path.basename(abPfad)} hat keine Aufgabe mit nr "${nr}" `
+        + `(zitiert in ${wo(o)}). Vorhandene Nummern: ${vorhanden()}.`);
+    if (treffer.text == null)
+      fehler(`ab_spec ${path.basename(abPfad)}: Aufgabe nr "${nr}" hat keinen text `
+        + `(zitiert in ${wo(o)}).`);
+    o.e.text = treffer.text;
+  });
+  return offen.length;
+}
+
 function bauplanPruefen(spec) {
   const befunde = [];
   if ((spec.dokumenttyp ?? "ab") !== "ab") return befunde;
@@ -990,12 +1069,15 @@ async function main() {
   try { spec = YAML.parse(fs.readFileSync(specPfad, "utf8")); }
   catch (err) { fehler(`Spec nicht lesbar: ${err.message}`); }
   specPruefen(spec);
+  // Vor dem Bauplan-Check: zitierte Aufgaben tragen danach ihren Text.
+  const zitate = zitateAufloesen(spec, specPfad);
   const bauplan = bauplanPruefen(spec);
   bauplan.forEach((b) => warnung(b));
   if (argv.includes("--check")) {
     console.log(`Check ${path.basename(specPfad)}: Spec ok (Kit ${KIT_VERSION}), `
       + `Bauplan ${bauplan.length ? bauplan.length + " Befund(e)" : "ohne Befund"}`
-      + ((spec.dokumenttyp ?? "ab") !== "ab" ? " (Loesung — Bauplan nicht geprueft)" : ""));
+      + ((spec.dokumenttyp ?? "ab") !== "ab" ? " (Loesung — Bauplan nicht geprueft)" : "")
+      + (zitate ? `, ${zitate} Zitat(e) aus ${spec.ab_spec}` : ""));
     warnungen.forEach((w) => console.log("  Warnung: " + w));
     return;
   }
@@ -1020,7 +1102,9 @@ async function main() {
   const buf = await Packer.toBuffer(doc);
   const docxPfad = path.join(outDir, spec.ausgabe);
   fs.writeFileSync(docxPfad, buf);
-  console.log(`${spec.ausgabe} geschrieben -> ${outDir}  (Profil ${ST.profil}, Kit ${KIT_VERSION})`);
+  console.log(`${spec.ausgabe} geschrieben -> ${outDir}  (Profil ${ST.profil}, Kit ${KIT_VERSION})`
+    + (zitate ? `
+   ${zitate} Aufgabenzitat(e) aus ${spec.ab_spec} uebernommen` : ""));
 
   if (argv.includes("--pdf")) {
     const so = soffice();
