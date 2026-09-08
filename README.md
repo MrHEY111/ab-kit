@@ -1,7 +1,7 @@
 # AB-Kit — Arbeitsblätter und Lösungen aus einer Spec
 
 Kit-Version: siehe `KIT_VERSION` · Stand 08.09.2026 · Repo: `https://github.com/mrhey111/ab-kit` (öffentlich, kanonisch) · Arbeitskopie Windows: `C:\dev\ab_kit\` (Klon)
-<!-- schema-bindung: v1.15 (2026-09-07) -->
+<!-- schema-bindung: v1.16 (2026-09-08) -->
 
 Ein Renderer, alle Unterschiede zwischen Blättern stehen in der Spec. Pro
 Arbeitsblatt oder Erwartungshorizont gibt es genau eine Textdatei
@@ -343,6 +343,11 @@ Ein Übungsblatt ist wie eine Arbeit gebaut: Aufgaben in AFB-Reihenfolge
 I → II → III, Punktanteile wie in der Lernkontrolle je Schulzweig, AFB III
 freiwillig. Der Stunden-Bauplan A-1…A-5 gilt hier ausdrücklich **nicht**
 (`AB_Qualitaet.md`: Übungs- und reine Plenumsblöcke fallen nicht darunter).
+Im Archiv-Schema (`_Konfiguration\Archiv_Schema.yaml`, Abschnitt
+`material.spec`, v1.16) sind `uebung` als Dokumenttyp, die drei Top-Level-
+Felder als Optionalfelder und `Uebung_<Name>_<Zweig>.spec.yaml` als
+Dateistamm hinterlegt; die Elementfelder `punkte`/`afb` sind kein
+Schema-Gegenstand.
 
 **Spec:** alle bestehenden Elemente; `stundenfrage`, `notanker`, `sprinter`,
 `ritual` sind nicht erlaubt (Ü-5). Neu: `aufgabe.punkte` und
