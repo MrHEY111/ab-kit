@@ -33,6 +33,15 @@
  * gematcht unter der vorangehenden aufgabe gleicher `nr`. Vorhandener `text`
  * gewinnt. Siehe zitateAufloesen().
  *
+ * Uebungsblaetter (Kit 1.8): `dokumenttyp: uebung` baut ein Blatt wie eine
+ * Arbeit — Aufgaben in AFB-Reihenfolge I -> II -> III, `punkte` je (Teil-)
+ * Aufgabe rechtsbuendig, Kasten `afb3_hinweis` vor der ersten AFB-III-Aufgabe.
+ * Der Stunden-Bauplan A-1..A-5 gilt dort nicht; stattdessen Ue-1..Ue-5
+ * (AFB-Anteile gegen config\afb_richtwert.json je `zweig` oder
+ * `afb_richtwert`, AFB III freiwillig, Reihenfolge, Punkte, Fremdelemente).
+ * Eine Loesung mit `ab_spec` auf eine uebung-Spec uebernimmt punkte und afb
+ * der zitierten Aufgaben und haengt ein Bewertungsraster (`punkteraster`) an.
+ *
  * Fallen, die hier gekapselt sind (README.md fuehrt die Liste):
  *   - kein spacing.line im Default-Style (schneidet Bilder ab)
  *   - leerer Absatz nach jeder Tabelle (LibreOffice verschmilzt sonst
@@ -73,6 +82,14 @@ const {
 
 const KIT_DIR = __dirname;
 const KIT_VERSION = fs.readFileSync(path.join(KIT_DIR, "KIT_VERSION"), "utf8").trim();
+// AFB-Richtwerte je Schulzweig (Kit 1.8). Kopie des lernkontrolle-Skills,
+// Quelle und Stand stehen in der Datei; Schluessel mit "_" sind Kommentar.
+const AFB_RICHTWERT = (() => {
+  const roh = JSON.parse(fs.readFileSync(path.join(KIT_DIR, "config", "afb_richtwert.json"), "utf8"));
+  return Object.fromEntries(Object.entries(roh).filter(([k]) => !k.startsWith("_")));
+})();
+const AFB_TOLERANZ_DEFAULT = 10;      // Prozentpunkte
+const AFB3_HINWEIS_DEFAULT = "Zusatz \u2014 freiwillig. Diese Aufgaben zeigen, was f\u00fcr eine sehr gute Leistung gebraucht wird.";
 const A4_BREITE = 11906;                       // twips
 
 /* ======================================================= Profile / Stil == */
@@ -166,9 +183,12 @@ function fehler(msg) {
 }
 const warnungen = [];
 function warnung(msg) { warnungen.push(msg); }
+const hinweise = [];                 // Kit 1.8: unterhalb von Warnung
+function hinweis(msg) { hinweise.push(msg); }
 
 let ST;                 // aktiver Stil
 let CTX;                // { outDir, spec }
+let AB_QUELLE = null;   // per ab_spec geladene AB-/Uebungs-Spec (Kit 1.8)
 
 function farbe(v) {
   if (v == null) return undefined;
@@ -229,6 +249,7 @@ function absatz(text, o = {}) {
     spacing: { before: o.vor ?? 0, after: o.nach ?? ST.absatz_nach },
     indent: o.einzug ? { left: o.einzug } : undefined,
     pageBreakBefore: o.umbruch || undefined,
+    keepNext: o.zusammen || undefined,
     border: o.linie_unten
       ? { bottom: { style: BorderStyle.SINGLE, size: o.linie_unten, color: farbe(o.linie_farbe ?? "dunkel") } }
       : undefined,
@@ -406,15 +427,37 @@ ELEMENTE.ueberschrift = (e) => {
   })];
 };
 
+// Punkte (Kit 1.8): gueltig = Zahl > 0. Eine aufgabe mit teilaufgaben rendert
+// die Summe der Teilpunkte (aufgabenBilanz setzt _punkte_gesamt), sonst ihre
+// eigenen. Rechtsbuendig ueber einen Tabstop am Satzende: "(4 P)".
+function punkteGueltig(v) {
+  if (v == null || v === "") return false;
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0;
+}
+function punkteText(p) {
+  const n = Number(p);
+  return `(${Number.isInteger(n) ? n : String(n).replace(".", ",")} P)`;
+}
+function punkteAnzeige(e) {
+  if (punkteGueltig(e.punkte)) return Number(e.punkte);
+  return e._punkte_gesamt > 0 ? e._punkte_gesamt : null;
+}
+const punkteRun = (p, groesse) => (p == null ? [] : [run(`\t${punkteText(p)}`, { groesse })]);
+const punkteTab = (p) => (p == null ? undefined : [{ type: TabStopType.RIGHT, position: ST.satzbreite }]);
+
 ELEMENTE.aufgabe = (e) => {
+  const p = punkteAnzeige(e);
   const kinder = [new Paragraph({
     pageBreakBefore: e.umbruch || undefined,
     spacing: { before: e.vor ?? (e.umbruch ? 0 : ST.abschnitt_vor), after: e.nach ?? (e.unterzeile ? 20 : ST.abschnitt_nach) },
+    tabStops: punkteTab(p),
     children: [
       run(`${e.nr}${ST.aufgabe_trenner ?? "  "}`, { fett: true, groesse: ST.aufgabe_groesse }),
       ...runs(e.text, e.zitat
         ? { kursiv: true, farbe: "grau", groesse: ST.aufgabe_text_groesse }
         : { fett: true, groesse: ST.aufgabe_text_groesse }),
+      ...punkteRun(p, ST.aufgabe_text_groesse),
     ],
   })];
   if (e.unterzeile) kinder.push(absatz(e.unterzeile, { groesse: 18, farbe: "grau", nach: 60 }));
@@ -444,6 +487,51 @@ ELEMENTE.loesung = (e) => [new Paragraph({
     ...runs(e.text, { groesse: e.groesse ?? ST.groesse, kursiv: e.kursiv }),
   ],
 })];
+
+// Bewertungsraster einer Loesung zu einem Uebungsblatt (Kit 1.8). Datenquelle
+// ist die per ab_spec geladene uebung-Spec; Format wie das Raster im
+// lernkontrolle-Skill (Schritt 3): Aufgabentabelle, AFB-Summen, Soll/Ist.
+ELEMENTE.punkteraster = (e) => {
+  if (!AB_QUELLE || (AB_QUELLE.dokumenttyp ?? "ab") !== "uebung")
+    fehler("punkteraster braucht ab_spec auf eine Spec mit dokumenttyp: uebung.");
+  const { items } = aufgabenBilanz(AB_QUELLE);
+  const bilanz = afbBilanz(items);
+  const rw = richtwertFuer(AB_QUELLE);
+  const pz = (v) => `${Number.isInteger(v) ? v : v.toFixed(1).replace(".", ",")}`;
+  const out = [];
+  out.push(...ELEMENTE.abschnitt({ text: e.titel ?? "Bewertungsraster" }));
+  out.push(...ELEMENTE.tabelle({
+    kopf_fuellung: "EFEFEF", zelle: { top: 40, bottom: 40, left: 90, right: 90 },
+    spalten: [{ kopf: "Aufgabe", breite: 1700, ausrichtung: "links" }, { kopf: "AFB", breite: 1200, ausrichtung: "mitte" }, { kopf: "Punkte", breite: 1400, ausrichtung: "mitte" }],
+    zeilen: items.map((it) => [`${it.nr}${it.buchstabe ?? ""}`, it.afb ?? "\u2013", punkteGueltig(it.punkte) ? pz(Number(it.punkte)) : "\u2013"]),
+  }));
+  const anteil = (k) => (bilanz.gesamt > 0 ? `${pz(Math.round(bilanz.anteil[k] * 10) / 10)} %` : "\u2013");
+  out.push(...ELEMENTE.tabelle({
+    kopf_fuellung: "EFEFEF", zelle: { top: 40, bottom: 40, left: 90, right: 90 },
+    spalten: [{ kopf: "AFB", breite: 1700, ausrichtung: "links" }, { kopf: "Punkte", breite: 1200, ausrichtung: "mitte" }, { kopf: "Anteil", breite: 1400, ausrichtung: "mitte" }],
+    zeilen: [
+      ["AFB I", pz(bilanz.summe.I), anteil("I")],
+      ["AFB II", pz(bilanz.summe.II), anteil("II")],
+      ["AFB III", pz(bilanz.summe.III), anteil("III")],
+      [{ text: "Gesamt", fett: true }, { text: pz(bilanz.gesamt), fett: true }, { text: bilanz.gesamt > 0 ? "100 %" : "\u2013", fett: true }],
+    ],
+  }));
+  const ist = ["I", "II", "III"].map((k) => `AFB ${k} = ${anteil(k)}`).join(" \u00b7 ");
+  if (rw.fehler) {
+    out.push(absatz(`Soll: kein Richtwert \u2014 ${rw.fehler}`, { groesse: 20, farbe: "grau", nach: 20, zusammen: true }));
+    out.push(absatz(`Ist:  ${ist}`, { groesse: 20, farbe: "grau" }));
+  } else {
+    const soll = ["I", "II", "III"].map((k) => `AFB ${k} = ${rw.werte[k]} %`).join(" \u00b7 ");
+    const abw = afbAbweichungen(bilanz, rw.werte, afbToleranz(AB_QUELLE));
+    out.push(absatz(`Soll: ${soll}`, { groesse: 20, farbe: "grau", nach: 20, zusammen: true }));
+    out.push(absatz(`Ist:  ${ist}`, { groesse: 20, farbe: "grau", nach: 20, zusammen: true }));
+    out.push(absatz(abw.length
+      ? `\u26a0 Verteilung abweichend (Toleranz \u00b1${afbToleranz(AB_QUELLE)} Pp): ${abw.join(", ")}`
+      : `\u2713 Verteilung eingehalten (Toleranz \u00b1${afbToleranz(AB_QUELLE)} Pp)`,
+      { groesse: 20, fett: true }));
+  }
+  return out;
+};
 
 ELEMENTE.leer = (e) => [leer(e.hoehe ?? 100)];
 ELEMENTE.seitenumbruch = () => [new Paragraph({ children: [new PageBreak()] })];
@@ -558,12 +646,15 @@ ELEMENTE.lueckenzeile = (e) => {
 ELEMENTE.teilaufgabe = (e) => [new Paragraph({
   spacing: { before: e.vor ?? 40, after: e.nach ?? 30 },
   indent: { left: e.einzug ?? 220 },
+  tabStops: punkteTab(punkteAnzeige(e)),
   children: [
+    ...[],
     run(`${e.buchstabe})  `, { fett: true, groesse: e.groesse ?? ST.anweisung_groesse,
       ...(e.zitat ? { farbe: "grau" } : {}) }),
     ...runs(e.text, e.zitat
       ? { kursiv: true, farbe: "grau", groesse: e.groesse ?? ST.anweisung_groesse }
       : { groesse: e.groesse ?? ST.anweisung_groesse, kursiv: e.kursiv }),
+    ...punkteRun(punkteAnzeige(e), e.groesse ?? ST.anweisung_groesse),
   ],
 })];
 
@@ -818,22 +909,43 @@ function rendern(e) {
 
 function seiteBauen(seite, spec) {
   const elemente = [...(seite.elemente || [])];
+  const istUebung = (spec.dokumenttyp ?? "ab") === "uebung";
+  // Uebungsblatt (Kit 1.8): Untertitel-Default, wenn die Seite keinen setzt.
+  const untertitel = seite.untertitel ?? (istUebung ? "\u00dcbungsblatt" : undefined);
   // Kopfzeile / Titel aus Seiten- oder Spec-Ebene voranstellen
   const kopf = seite.kopfzeile === false ? null : { ...(spec.kopf || {}), ...(seite.kopfzeile || {}) };
   const vorne = [];
   if (kopf && Object.keys(kopf).length) {
     const variante = kopf.variante ?? ST.kopfzeile_variante;
-    if (variante === "tabelle") vorne.push({ typ: "kopfzeile", titel: seite.titel, links: seite.untertitel ?? kopf.links, ...kopf, ...(seite.titel ? { titel: seite.titel } : {}) });
+    if (variante === "tabelle") vorne.push({ typ: "kopfzeile", titel: seite.titel, links: untertitel ?? kopf.links, ...kopf, ...(seite.titel ? { titel: seite.titel } : {}) });
     else {
       vorne.push({ typ: "kopfzeile", ...kopf });
-      if (seite.titel) vorne.push({ typ: "titel", text: seite.titel, untertitel: seite.untertitel });
+      if (seite.titel) vorne.push({ typ: "titel", text: seite.titel, untertitel });
     }
   } else if (seite.titel) {
-    vorne.push({ typ: "titel", text: seite.titel, untertitel: seite.untertitel, linie: seite.titel_linie });
+    vorne.push({ typ: "titel", text: seite.titel, untertitel, linie: seite.titel_linie });
   }
   // Notanker im Fuss abfangen
   const fussAnker = elemente.filter((e) => e.typ === "notanker" && (e.position ?? "fuss") === "fuss");
-  const fluss = elemente.filter((e) => !(e.typ === "notanker" && (e.position ?? "fuss") === "fuss"));
+  let fluss = elemente.filter((e) => !(e.typ === "notanker" && (e.position ?? "fuss") === "fuss"));
+  // Uebungsblatt: Kasten afb3_hinweis vor der ERSTEN AFB-III-Aufgabe des
+  // Blattes (einmal je Spec, Stil infokasten, nicht der Ritual-Kasten).
+  if (istUebung && !CTX.afb3Gesetzt) {
+    const idx = fluss.findIndex((e) => e.typ === "aufgabe" && afbNorm(e.afb) === "III");
+    if (idx >= 0) {
+      CTX.afb3Gesetzt = true;
+      fluss = [...fluss.slice(0, idx),
+        { typ: "infokasten", absaetze: [{ text: spec.afb3_hinweis ?? AFB3_HINWEIS_DEFAULT, kursiv: true }] },
+        ...fluss.slice(idx)];
+    }
+  }
+  // Loesung zu einem Uebungsblatt: Bewertungsraster am Ende der letzten Seite,
+  // sofern die Spec es nicht selbst als Element `punkteraster` platziert.
+  if ((spec.dokumenttyp ?? "ab") === "loesung" && AB_QUELLE && (AB_QUELLE.dokumenttyp ?? "ab") === "uebung"
+      && seite === spec.seiten[spec.seiten.length - 1]
+      && !spec.seiten.some((sx) => elementeFlach(sx.elemente).some((e) => e.typ === "punkteraster"))) {
+    fluss = [...fluss, { typ: "punkteraster" }];
+  }
 
   const children = [...vorne, ...fluss].flatMap((e) => rendern(e));
   const rand = { ...ST.rand, ...(seite.rand || {}) };
@@ -868,6 +980,141 @@ function specPruefen(spec) {
   }
   if (!Array.isArray(spec.seiten) || !spec.seiten.length) fehler("seiten: muss eine nicht-leere Liste sein.");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(spec.stand))) warnung(`stand '${spec.stand}' ist nicht ISO (JJJJ-MM-TT).`);
+  const dt = spec.dokumenttyp ?? "ab";
+  if (!["ab", "loesung", "uebung"].includes(dt)) warnung(`dokumenttyp '${dt}' unbekannt (ab | loesung | uebung) — wird wie ab behandelt.`);
+}
+
+/* ====================================== Uebungsblatt-Check (Kit 1.8) ===== */
+// Gilt nur fuer dokumenttyp: uebung. A-1..A-5 entfallen dort vollstaendig
+// (AB_Qualitaet.md: Uebungs- und reine Plenumsbloecke fallen nicht unter den
+// Bauplan). Nur Warnungen bzw. Hinweise, nie Abbruch.
+//   Ue-1 AFB-Anteile: Punktsumme je AFB gegen Richtwert (zweig oder
+//        afb_richtwert), Toleranz afb_toleranz (Default 10 Prozentpunkte)
+//   Ue-2 AFB III freiwillig: keine AFB-III-Aufgabe = Hinweis, keine Warnung
+//   Ue-3 Reihenfolge I -> II -> III auf Aufgabenebene
+//   Ue-4 Punkte: jede aufgabe ohne Teilaufgaben und jede teilaufgabe > 0;
+//        eigene Punkte einer aufgabe mit Teilaufgaben muessen deren Summe sein
+//   Ue-5 Fremdelemente: stundenfrage, notanker, sprinter, ritual
+
+function afbNorm(v) { return v == null ? null : String(v).trim().toUpperCase(); }
+
+// Ordnet Teilaufgaben ihrer aufgabe zu, prueft Punkte und setzt
+// e._punkte_gesamt fuer das Rendering. Laeuft fuer jeden Dokumenttyp; ohne
+// punkte-Angaben bleibt alles unberuehrt.
+function aufgabenBilanz(spec) {
+  const items = [];
+  const probleme = [];
+  (spec.seiten || []).forEach((seite) => {
+    let akt = null;
+    let teile = [];
+    const abschluss = () => {
+      if (!akt) return;
+      if (teile.length) {
+        const summe = teile.reduce((a, t) => a + (punkteGueltig(t.punkte) ? Number(t.punkte) : 0), 0);
+        if (punkteGueltig(akt.punkte) && Number(akt.punkte) !== summe)
+          probleme.push(`Aufgabe ${akt.nr} tr\u00e4gt punkte ${akt.punkte}, die Teilaufgaben summieren ${summe}.`);
+        akt._punkte_gesamt = summe > 0 ? summe : null;
+        teile.forEach((t) => items.push({ art: "teil", nr: akt.nr, buchstabe: t.buchstabe, afb: afbNorm(t.afb ?? akt.afb), punkte: t.punkte, e: t }));
+      } else {
+        if (!punkteGueltig(akt.punkte)) probleme.push(`Aufgabe ${akt.nr} ohne punkte (> 0).`);
+        akt._punkte_gesamt = null;
+        items.push({ art: "aufgabe", nr: akt.nr, buchstabe: null, afb: afbNorm(akt.afb), punkte: akt.punkte, e: akt });
+      }
+    };
+    elementeFlach(seite.elemente).forEach((e) => {
+      if (e.typ === "aufgabe") { abschluss(); akt = e; teile = []; }
+      else if (e.typ === "teilaufgabe" && akt) {
+        if (!punkteGueltig(e.punkte)) probleme.push(`Teilaufgabe ${akt.nr}${e.buchstabe ?? "?"} ohne punkte (> 0).`);
+        teile.push(e);
+      }
+    });
+    abschluss();
+  });
+  return { items, probleme };
+}
+
+function afbBilanz(items) {
+  const summe = { I: 0, II: 0, III: 0 };
+  items.forEach((it) => { if (punkteGueltig(it.punkte) && summe[it.afb] != null) summe[it.afb] += Number(it.punkte); });
+  const gesamt = summe.I + summe.II + summe.III;
+  const anteil = { I: 0, II: 0, III: 0 };
+  if (gesamt > 0) ["I", "II", "III"].forEach((k) => { anteil[k] = (100 * summe[k]) / gesamt; });
+  return { summe, gesamt, anteil };
+}
+
+function afbToleranz(spec) {
+  const t = Number(spec.afb_toleranz);
+  return Number.isFinite(t) && t >= 0 ? t : AFB_TOLERANZ_DEFAULT;
+}
+
+// { werte: {I,II,III}, quelle } oder { fehler }
+function richtwertFuer(spec) {
+  if (spec.afb_richtwert != null) {
+    const r = spec.afb_richtwert;
+    const w = { I: Number(r.I), II: Number(r.II), III: Number(r.III) };
+    if (![w.I, w.II, w.III].every(Number.isFinite))
+      return { fehler: "afb_richtwert braucht I, II und III als Zahlen." };
+    if (Math.abs(w.I + w.II + w.III - 100) > 0.01)
+      return { fehler: `afb_richtwert summiert auf ${w.I + w.II + w.III} statt 100.` };
+    return { werte: w, quelle: "afb_richtwert" };
+  }
+  const z = String(spec.zweig ?? "").trim();
+  if (AFB_RICHTWERT[z]) return { werte: AFB_RICHTWERT[z], quelle: `zweig ${z}` };
+  return { fehler: `\u00dcbungsblatt braucht Einzelzweig oder afb_richtwert (zweig: ${z || "fehlt"}).` };
+}
+
+function afbAbweichungen(bilanz, werte, toleranz) {
+  const pz = (v) => (Number.isInteger(v) ? String(v) : v.toFixed(1).replace(".", ","));
+  return ["I", "II", "III"]
+    .filter((k) => Math.abs(bilanz.anteil[k] - werte[k]) > toleranz + 1e-9)
+    .map((k) => `AFB ${k} ${pz(Math.round(bilanz.anteil[k] * 10) / 10)} % statt ${werte[k]} %`);
+}
+
+function uebungPruefen(spec) {
+  const befunde = [];
+  const m = (regel, text) => befunde.push(`\u00dcbung ${regel}: ${text}`);
+  const alle = (spec.seiten || []).flatMap((sx) => elementeFlach(sx.elemente));
+
+  // ---- Ue-5 Fremdelemente
+  ["stundenfrage", "notanker", "sprinter", "ritual"].forEach((t) => {
+    const n = alle.filter((e) => e.typ === t).length;
+    if (n) m("\u00dc-5", `${n} Element(e) ${t} \u2014 nicht erlaubt bei uebung.`);
+  });
+
+  // ---- Ue-4 Punkte
+  const { items, probleme } = aufgabenBilanz(spec);
+  probleme.forEach((p) => m("\u00dc-4", p));
+
+  // ---- Ue-3 Reihenfolge (Aufgabenebene)
+  const aufgaben = alle.filter((e) => e.typ === "aufgabe");
+  let maxRang = 0, maxNr = null;
+  aufgaben.forEach((e) => {
+    const k = afbNorm(e.afb);
+    if (k == null) { m("\u00dc-3", `Aufgabe ${e.nr} ohne afb (I | II | III).`); return; }
+    if (!AFB_RANG[k]) { m("\u00dc-3", `Aufgabe ${e.nr}: afb '${e.afb}' unbekannt (I, II, III).`); return; }
+    if (AFB_RANG[k] < maxRang)
+      m("\u00dc-3", `Aufgabe ${e.nr} (AFB ${k}) nach Aufgabe ${maxNr} (AFB ${Object.keys(AFB_RANG).find((x) => AFB_RANG[x] === maxRang)}) \u2014 Reihenfolge I \u2192 II \u2192 III.`);
+    if (AFB_RANG[k] > maxRang) { maxRang = AFB_RANG[k]; maxNr = e.nr; }
+  });
+
+  // ---- Ue-2 AFB III freiwillig
+  if (!items.some((it) => it.afb === "III"))
+    hinweis("\u00dcbung \u00dc-2: keine AFB-III-Aufgabe \u2014 zul\u00e4ssig; \u00dc-1 rechnet mit AFB III = 0 %.");
+
+  // ---- Ue-1 AFB-Anteile
+  const bilanz = afbBilanz(items);
+  if (bilanz.gesamt <= 0) { m("\u00dc-1", "keine Punkte \u2014 AFB-Anteile nicht pr\u00fcfbar."); return befunde; }
+  const rw = richtwertFuer(spec);
+  if (rw.fehler) { m("\u00dc-1", `${rw.fehler} Anteilspr\u00fcfung entf\u00e4llt.`); return befunde; }
+  const tol = afbToleranz(spec);
+  const abw = afbAbweichungen(bilanz, rw.werte, tol);
+  if (abw.length) {
+    const pz = (v) => (Number.isInteger(v) ? String(v) : v.toFixed(1).replace(".", ","));
+    const ist = ["I", "II", "III"].map((k) => pz(Math.round(bilanz.anteil[k] * 10) / 10)).join("/");
+    const soll = ["I", "II", "III"].map((k) => rw.werte[k]).join("/");
+    m("\u00dc-1", `AFB-Anteile weichen ab (Toleranz \u00b1${tol} Pp, Richtwert ${rw.quelle}): ${abw.join(", ")}. Ist I/II/III = ${ist} %, Soll = ${soll} % bei ${pz(bilanz.gesamt)} P.`);
+  }
+  return befunde;
 }
 
 /* ============================================ Bauplan-Check (Kit 1.2) ===== */
@@ -933,12 +1180,12 @@ function aufgabenIndex(spec) {
         const nr = String(e.nr).trim();
         nrAktuell = nr;
         if (index.has(nr)) doppelt.add(`nr "${nr}"`);
-        else index.set(nr, { text: e.text, seite: si + 1 });
+        else index.set(nr, { text: e.text, seite: si + 1, e });
       } else if (e.typ === "teilaufgabe" && e.buchstabe != null && nrAktuell != null) {
         const b = String(e.buchstabe).trim();
         const k = `${nrAktuell}|${b}`;
         if (teile.has(k)) doppelt.add(`nr "${nrAktuell}" ${b})`);
-        else teile.set(k, { text: e.text, seite: si + 1 });
+        else teile.set(k, { text: e.text, seite: si + 1, e });
       }
     });
   });
@@ -981,6 +1228,16 @@ function zitateAufloesen(spec, specPfad) {
   if (!ab || !Array.isArray(ab.seiten))
     fehler(`ab_spec ohne seiten-Liste: ${abPfad}`);
 
+  AB_QUELLE = ab;
+  // Uebungsblatt als Quelle (Kit 1.8): punkte und afb wandern mit dem Zitat,
+  // sofern die Loesung sie nicht selbst setzt.
+  const uebernehmen = (ziel, treffer) => {
+    ziel.text = treffer.text;
+    if ((ab.dokumenttyp ?? "ab") === "uebung" && treffer.e) {
+      if (ziel.punkte == null && treffer.e.punkte != null) ziel.punkte = treffer.e.punkte;
+      if (ziel.afb == null && treffer.e.afb != null) ziel.afb = treffer.e.afb;
+    }
+  };
   const { index, teile, doppelt } = aufgabenIndex(ab);
   if (doppelt.size)
     fehler(`ab_spec ${path.basename(abPfad)} fuehrt mehrfach: `
@@ -1006,7 +1263,7 @@ function zitateAufloesen(spec, specPfad) {
           + `(zitiert in ${wo(o)}). Vorhandene Teilaufgaben dort: ${vorhandeneTeile(o.nr)}.`);
       if (treffer.text == null)
         fehler(`ab_spec ${abName}: teilaufgabe ${b}) unter nr "${o.nr}" hat keinen text (zitiert in ${wo(o)}).`);
-      o.e.text = treffer.text;
+      uebernehmen(o.e, treffer);
       return;
     }
     const nr = String(o.e.nr).trim();
@@ -1017,7 +1274,7 @@ function zitateAufloesen(spec, specPfad) {
     if (treffer.text == null)
       fehler(`ab_spec ${abName}: Aufgabe nr "${nr}" hat keinen text `
         + `(zitiert in ${wo(o)}).`);
-    o.e.text = treffer.text;
+    uebernehmen(o.e, treffer);
   });
   return offen.length;
 }
@@ -1141,14 +1398,17 @@ async function main() {
   specPruefen(spec);
   // Vor dem Bauplan-Check: zitierte Aufgaben tragen danach ihren Text.
   const zitate = zitateAufloesen(spec, specPfad);
-  const bauplan = bauplanPruefen(spec);
+  aufgabenBilanz(spec);              // _punkte_gesamt fuer das Rendering (Kit 1.8)
+  const bauplan = (spec.dokumenttyp ?? "ab") === "uebung" ? uebungPruefen(spec) : bauplanPruefen(spec);
   bauplan.forEach((b) => warnung(b));
   if (argv.includes("--check")) {
     console.log(`Check ${path.basename(specPfad)}: Spec ok (Kit ${KIT_VERSION}), `
       + `Bauplan ${bauplan.length ? bauplan.length + " Befund(e)" : "ohne Befund"}`
-      + ((spec.dokumenttyp ?? "ab") !== "ab" ? " (Loesung — Bauplan nicht geprueft)" : "")
+      + ((spec.dokumenttyp ?? "ab") === "uebung" ? " (Uebung — \u00dc-1 bis \u00dc-5 statt Bauplan)"
+        : (spec.dokumenttyp ?? "ab") !== "ab" ? " (Loesung — Bauplan nicht geprueft)" : "")
       + (zitate ? `, ${zitate} Zitat(e) aus ${spec.ab_spec}` : ""));
     warnungen.forEach((w) => console.log("  Warnung: " + w));
+    hinweise.forEach((h) => console.log("  Hinweis: " + h));
     return;
   }
   ST = stilAufloesen(spec);
@@ -1193,6 +1453,7 @@ async function main() {
     }
   }
   warnungen.forEach((w) => console.log("  Warnung: " + w));
+  hinweise.forEach((h) => console.log("  Hinweis: " + h));
 }
 
 main().catch((err) => { console.error(err); process.exit(1); });

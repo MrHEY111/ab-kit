@@ -125,7 +125,7 @@ Sichtprüfung immer über das PDF (`pdftoppm -r 60 -png`), nie über die docx.
 
 ```yaml
 kit_version: "1.0"          # Pflicht — Kit-Stand, mit dem die Spec gebaut wurde
-dokumenttyp: ab             # ab | loesung
+dokumenttyp: ab             # ab | loesung | uebung (Übungsblatt, Kit 1.8)
 block: CH-09.WAS-B3         # Pflicht
 titel: Wasserbestandteile   # Pflicht — Kurzname des Materials
 zweig: GR                   # Pflicht — GR | G | R | H | LK (Lösung)
@@ -134,6 +134,9 @@ stand: 2026-09-03           # Pflicht — ISO, Stand dieser Spec
 version: "2.2"              # optional — Materialversion (Blueprint-Bezug)
 ab_spec: AB_Wasser_GR.spec.yaml   # optional (Kit 1.5) — nur `dokumenttyp: loesung`:
                             # Quelle für Aufgabenzitate, relativ zum Spec-Ordner
+afb_richtwert: {I: 20, II: 60, III: 20}   # optional (uebung, Kit 1.8) — sonst Default je zweig
+afb_toleranz: 10            # optional (uebung) — Prozentpunkte, Default 10
+afb3_hinweis: "Zusatz — freiwillig. …"   # optional (uebung) — Kasten vor der ersten AFB-III-Aufgabe
 stil:                       # optional — Profil + Überschreibungen
   profil: kompakt           # kompakt | kanon | loesung-kompakt | loesung-kanon
   rand: {oben: 850, unten: 850, links: 850, rechts: 850}
@@ -177,13 +180,14 @@ Alle Profilwerte lassen sich unter `stil:` einzeln überschreiben
 | `titel` | `text`, `untertitel`, `linie` | |
 | `abschnitt` | `text`, `umbruch` | unnummerierter Kopf (Stundenfrage, Sprinteraufgabe, …) |
 | `ueberschrift` | `text`, `ebene: 1\|2` | Lösungen |
-| `aufgabe` | `nr`, `text`, `zitat`, `unterzeile`, `umbruch`, `afb`, `bezug` | `zitat: true` = AB-Wortlaut grau-kursiv (Lösung), ohne `text` wird er aus `ab_spec` gezogen (siehe Aufgabenzitate); `afb: I\|II\|III` und `bezug` (Einstieg, Simulation, Versuch, …) werden nicht gerendert, nur vom Bauplan-Check gelesen |
+| `aufgabe` | `nr`, `text`, `zitat`, `unterzeile`, `umbruch`, `afb`, `bezug`, `punkte` | `punkte` (Kit 1.8) rechtsbündig als „(4 P)“, bei Teilaufgaben deren Summe; `zitat: true` = AB-Wortlaut grau-kursiv (Lösung), ohne `text` wird er aus `ab_spec` gezogen (siehe Aufgabenzitate); `afb: I\|II\|III` und `bezug` (Einstieg, Simulation, Versuch, …) werden nicht gerendert, nur vom Bauplan-Check gelesen |
 | `anweisung` / `text` | `text`, `groesse`, `fett`, `kursiv`, `farbe`, `vor`, `nach`, `einzug`, `ausrichtung` | |
 | `stichpunkte` | `punkte: []` | Aufzählung |
 | `loesung` | `text` | Lösungsabsatz mit Marker |
+| `punkteraster` | `titel` | Bewertungsraster einer Lösung zu einem Übungsblatt (Kit 1.8): Aufgabentabelle, AFB-Summen mit Anteil, Soll/Ist — wird am Ende automatisch angehängt, wenn `ab_spec` auf eine `uebung`-Spec zeigt und das Element nicht selbst platziert ist |
 | `stundenfrage` | `modus: fest\|platzhalter`, `text`, `hoehe`, `zeilen`, `label`, `sperrung`, `staerke`, `rahmen` | K-008: Platzhalter zum Selbsteintragen; Profil-Defaults `stundenfrage_label/_sperrung/_fett/_staerke/_rahmen` |
 | `ritual` | `kanon: vermuten\|punkt`, `label`, `zusatz`, `zusatz_inline` | 🔮 / 🎯, Wortlaut aus dem Profil; `label: ""` = ohne Label (Layout_wh) |
-| `teilaufgabe` | `buchstabe`, `text`, `zitat`, `einzug` | a) / b) unter einer Aufgabe; `zitat: true` = AB-Wortlaut grau-kursiv (Lösung), ohne `text` aus `ab_spec` gezogen — gematcht über `buchstabe` unter der vorangehenden `aufgabe` (Kit 1.6) |
+| `teilaufgabe` | `buchstabe`, `text`, `zitat`, `einzug`, `punkte`, `afb` | `punkte`/`afb` (Kit 1.8) für Übungsblätter, `afb` erbt von der Aufgabe; a) / b) unter einer Aufgabe; `zitat: true` = AB-Wortlaut grau-kursiv (Lösung), ohne `text` aus `ab_spec` gezogen — gematcht über `buchstabe` unter der vorangehenden `aufgabe` (Kit 1.6) |
 | `ankreuzen` | `optionen: []`, `einzug` | ☐-Zeilen |
 | `zitat` | `text`, `einzug` | wörtlicher AB-Text in der Lösung, grau-kursiv |
 | `raster` / `tabelle` | `spalten: [{kopf, breite, ausrichtung}]`, `zeilen`, `zeilenhoehe`, `gruppen`, `luecke`, `kopf_fuellung` | `zeilen`-Eintrag: String (Label 1. Spalte) oder Liste von Zellen; Zelle: String oder `{text, fett, farbe}`; `gruppen` = Tabellen nebeneinander |
@@ -333,6 +337,49 @@ Regeln:
 - Die Auflösung läuft auch bei `--check`. `bau.ps1` prüft vor dem Bau,
   Drift fällt also auf, bevor irgendetwas geschrieben wird.
 
+## Übungsblätter (`dokumenttyp: uebung`, Kit 1.8)
+
+Ein Übungsblatt ist wie eine Arbeit gebaut: Aufgaben in AFB-Reihenfolge
+I → II → III, Punktanteile wie in der Lernkontrolle je Schulzweig, AFB III
+freiwillig. Der Stunden-Bauplan A-1…A-5 gilt hier ausdrücklich **nicht**
+(`AB_Qualitaet.md`: Übungs- und reine Plenumsblöcke fallen nicht darunter).
+
+**Spec:** alle bestehenden Elemente; `stundenfrage`, `notanker`, `sprinter`,
+`ritual` sind nicht erlaubt (Ü-5). Neu: `aufgabe.punkte` und
+`teilaufgabe.punkte` (Zahl > 0, Pflicht), optional `teilaufgabe.afb` (sonst von
+der Aufgabe geerbt). Top-Level `afb_richtwert: {I, II, III}` in Prozent (Summe
+100); fehlt es, gilt der Default je `zweig` aus `config\afb_richtwert.json`
+(G 20/60/20 · R 30/60/10 · H 40/50/10 — **Kopie** des lernkontrolle-Skills,
+Abschnitt „AFB-Verteilung“; Master ist der Skill). Kombinierter Zweig (`GR`)
+ohne `afb_richtwert` → Warnung, Anteilsprüfung entfällt. `afb_toleranz` in
+Prozentpunkten (Default 10; der Skill nennt für die LK ±5). `afb3_hinweis`
+(Default „Zusatz — freiwillig. Diese Aufgaben zeigen, was für eine sehr gute
+Leistung gebraucht wird.“).
+
+**Rendering:** Kopf wie `ab`, Untertitel-Default „Übungsblatt“. Das Kit
+sortiert nicht um, es warnt bei falscher Reihenfolge. Vor der ersten
+AFB-III-Aufgabe steht `afb3_hinweis` als `infokasten`. Punkte je
+(Teil-)Aufgabe rechtsbündig: `(4 P)`; eine Aufgabe mit Teilaufgaben zeigt
+deren Summe. Keine AFB-Labels, kein Notanker, keine Ritual-Icons.
+
+**`--check`** (nur `uebung`, Warnungen bzw. Hinweise, nie Abbruch):
+
+| Prüfung | Befund |
+|---|---|
+| Ü-1 AFB-Anteile | Punktsumme je AFB gegen Richtwert; Abweichung über `afb_toleranz` → Warnung mit Ist/Soll |
+| Ü-2 AFB III freiwillig | keine AFB-III-Aufgabe → **Hinweis** (zulässig; Ü-1 rechnet mit 0 %) |
+| Ü-3 Reihenfolge | erste II nach der letzten I, erste III nach der letzten II — auf Aufgabenebene |
+| Ü-4 Punkte | jede Aufgabe ohne Teilaufgaben und jede Teilaufgabe trägt `punkte` > 0; eigene Punkte einer Aufgabe mit Teilaufgaben müssen deren Summe sein |
+| Ü-5 Fremdelemente | `stundenfrage`, `notanker`, `sprinter`, `ritual` → „nicht erlaubt bei uebung“ |
+
+**Lösung:** `dokumenttyp: loesung` mit `ab_spec` auf die `uebung`-Spec. Die
+Zitate bringen `punkte` und `afb` mit; am Ende der letzten Seite hängt das Kit
+das Bewertungsraster an (`punkteraster`: Aufgabentabelle, AFB-Summen mit
+Prozentanteil, Gesamtsumme, Soll/Ist — Format wie im lernkontrolle-Skill,
+Schritt 3). Wer es woanders will, setzt `{typ: punkteraster}` selbst.
+
+Testfall: `_build\specs\uebung_test.spec.yaml` (mit `Loesung_Uebungstest.spec.yaml`).
+
 ## Bauplan-Check (Kit 1.2)
 
 Jedes Arbeitsblatt (`dokumenttyp: ab`) wird beim Bau und bei `--check` gegen
@@ -363,9 +410,9 @@ Stundenfrage meldet weiterhin die Seitenprüfung.
 Specs ohne `afb:`-Angaben (Bestand vor 1.2) bekommen nur die Strukturprüfung
 A-4/A-5 und den Hinweis, dass die AFB-Kette nicht prüfbar ist. Nachrüsten
 beim nächsten Anfassen (Retrofit träge), kein Bestandsdurchlauf.
-Testfall mit bewusst fehlerhafter Seite: `_build\specs\bauplan_test.spec.yaml`
-(`node ab_kit.js _build\specs\bauplan_test.spec.yaml --check` → Seite 1 ohne,
-Seite 2 mit elf Befunden).
+Die frühere `_build\specs\bauplan_test.spec.yaml` gibt es seit dem Aufräumen von
+`_build\specs` (07.09.2026) nicht mehr; ein Bauplan-Testfall ist beim nächsten
+Bedarf neu anzulegen (`_build\specs` ist gitignored).
 
 ## Fallenliste — im Kit gekapselt, hier dokumentiert
 
@@ -437,6 +484,22 @@ Seite 2 mit elf Befunden).
 
 ## Änderungsprotokoll
 
+- **1.8 (08.09.2026)** — Neuer Dokumenttyp `uebung` (Übungsblatt wie eine
+  Arbeit): `punkte` an `aufgabe`/`teilaufgabe`, rechtsbündig gerendert;
+  Kasten `afb3_hinweis` vor der ersten AFB-III-Aufgabe; Untertitel-Default
+  „Übungsblatt“. `--check` prüft Ü-1 (AFB-Anteile gegen
+  `config\afb_richtwert.json` je `zweig` oder `afb_richtwert`, Toleranz
+  `afb_toleranz`), Ü-2 (AFB III freiwillig, Hinweis), Ü-3 (Reihenfolge), Ü-4
+  (Punkte), Ü-5 (Fremdelemente) statt A-1…A-5. Lösungen mit `ab_spec` auf eine
+  `uebung`-Spec übernehmen `punkte`/`afb` mit dem Zitat und hängen ein
+  Bewertungsraster an (`punkteraster`). Unbekannter `dokumenttyp` ist jetzt
+  eine Warnung. `ab` und `loesung` zu `ab`-Quellen rendern unverändert (alle
+  15 Archiv-Specs geprüft). **Teil B der Übergabe (Default „eine Kopie je
+  Seite“) ist nicht gebaut:** die beobachtete Doppelung stammt nicht aus dem
+  Kit — `AB_Ablauf_Brennerfuehrerschein_GR` baut seit jeher genau eine Kopie;
+  doppelt sind die nicht kit-gebauten Karten `Bedienkarte_Gasbrenner_*` und
+  `Fuehrerschein_Gasbrenner` (A5 quer, zwei Stück je A4, Blueprint). Rückfrage
+  gestellt, kein Umbau auf Verdacht.
 - **1.7 (08.09.2026)** — `--check` erkennt Specs, die mehr als einen Block
   tragen (A-4, Blatt): über alle `seiten` hinweg genau eine `stundenfrage`,
   höchstens ein `sprinter`, höchstens ein `ritual kanon: punkt`; Abweichung =

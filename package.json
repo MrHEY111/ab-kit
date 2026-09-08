@@ -1,6 +1,6 @@
 {
   "name": "ab_kit",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "private": true,
   "description": "AB-Kit: deklarative Specs (YAML) -> docx fuer Arbeitsblaetter und Loesungen",
   "main": "ab_kit.js",
