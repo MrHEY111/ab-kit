@@ -135,7 +135,7 @@ version: "2.2"              # optional — Materialversion (Blueprint-Bezug)
 ab_spec: AB_Wasser_GR.spec.yaml   # optional (Kit 1.5) — nur `dokumenttyp: loesung`:
                             # Quelle für Aufgabenzitate, relativ zum Spec-Ordner
 afb_richtwert: {I: 20, II: 60, III: 20}   # optional (uebung, Kit 1.8) — sonst Default je zweig
-afb_toleranz: 10            # optional (uebung) — Prozentpunkte, Default 10
+afb_toleranz: 5             # optional (uebung) — Prozentpunkte, Default 5 (wie die LK)
 afb3_hinweis: "Zusatz — freiwillig. …"   # optional (uebung) — Kasten vor der ersten AFB-III-Aufgabe
 stil:                       # optional — Profil + Überschreibungen
   profil: kompakt           # kompakt | kanon | loesung-kompakt | loesung-kanon
@@ -352,7 +352,8 @@ der Aufgabe geerbt). Top-Level `afb_richtwert: {I, II, III}` in Prozent (Summe
 (G 20/60/20 · R 30/60/10 · H 40/50/10 — **Kopie** des lernkontrolle-Skills,
 Abschnitt „AFB-Verteilung“; Master ist der Skill). Kombinierter Zweig (`GR`)
 ohne `afb_richtwert` → Warnung, Anteilsprüfung entfällt. `afb_toleranz` in
-Prozentpunkten (Default 10; der Skill nennt für die LK ±5). `afb3_hinweis`
+Prozentpunkten (Default 5, wie die LK im lernkontrolle-Skill; „über“ der
+Toleranz warnt, genau auf der Toleranz nicht). `afb3_hinweis`
 (Default „Zusatz — freiwillig. Diese Aufgaben zeigen, was für eine sehr gute
 Leistung gebraucht wird.“).
 
@@ -489,7 +490,8 @@ Bedarf neu anzulegen (`_build\specs` ist gitignored).
   Kasten `afb3_hinweis` vor der ersten AFB-III-Aufgabe; Untertitel-Default
   „Übungsblatt“. `--check` prüft Ü-1 (AFB-Anteile gegen
   `config\afb_richtwert.json` je `zweig` oder `afb_richtwert`, Toleranz
-  `afb_toleranz`), Ü-2 (AFB III freiwillig, Hinweis), Ü-3 (Reihenfolge), Ü-4
+  `afb_toleranz`, Default 5 Pp — am 08.09. nach der Abnahme von 10 auf 5
+  korrigiert, `zweig: R` mit 20/60/20 warnt damit), Ü-2 (AFB III freiwillig, Hinweis), Ü-3 (Reihenfolge), Ü-4
   (Punkte), Ü-5 (Fremdelemente) statt A-1…A-5. Lösungen mit `ab_spec` auf eine
   `uebung`-Spec übernehmen `punkte`/`afb` mit dem Zitat und hängen ein
   Bewertungsraster an (`punkteraster`). Unbekannter `dokumenttyp` ist jetzt
@@ -499,7 +501,8 @@ Bedarf neu anzulegen (`_build\specs` ist gitignored).
   Kit — `AB_Ablauf_Brennerfuehrerschein_GR` baut seit jeher genau eine Kopie;
   doppelt sind die nicht kit-gebauten Karten `Bedienkarte_Gasbrenner_*` und
   `Fuehrerschein_Gasbrenner` (A5 quer, zwei Stück je A4, Blueprint). Rückfrage
-  gestellt, kein Umbau auf Verdacht.
+  gestellt, kein Umbau auf Verdacht — Entscheidung 08.09.: Teil B entfällt,
+  Kartenlayout ist ein eigenes Thema.
 - **1.7 (08.09.2026)** — `--check` erkennt Specs, die mehr als einen Block
   tragen (A-4, Blatt): über alle `seiten` hinweg genau eine `stundenfrage`,
   höchstens ein `sprinter`, höchstens ein `ritual kanon: punkt`; Abweichung =

@@ -88,7 +88,7 @@ const AFB_RICHTWERT = (() => {
   const roh = JSON.parse(fs.readFileSync(path.join(KIT_DIR, "config", "afb_richtwert.json"), "utf8"));
   return Object.fromEntries(Object.entries(roh).filter(([k]) => !k.startsWith("_")));
 })();
-const AFB_TOLERANZ_DEFAULT = 10;      // Prozentpunkte
+const AFB_TOLERANZ_DEFAULT = 5;       // Prozentpunkte, wie die LK (lernkontrolle-Skill: ±5)
 const AFB3_HINWEIS_DEFAULT = "Zusatz \u2014 freiwillig. Diese Aufgaben zeigen, was f\u00fcr eine sehr gute Leistung gebraucht wird.";
 const A4_BREITE = 11906;                       // twips
 
@@ -989,7 +989,7 @@ function specPruefen(spec) {
 // (AB_Qualitaet.md: Uebungs- und reine Plenumsbloecke fallen nicht unter den
 // Bauplan). Nur Warnungen bzw. Hinweise, nie Abbruch.
 //   Ue-1 AFB-Anteile: Punktsumme je AFB gegen Richtwert (zweig oder
-//        afb_richtwert), Toleranz afb_toleranz (Default 10 Prozentpunkte)
+//        afb_richtwert), Toleranz afb_toleranz (Default 5 Prozentpunkte)
 //   Ue-2 AFB III freiwillig: keine AFB-III-Aufgabe = Hinweis, keine Warnung
 //   Ue-3 Reihenfolge I -> II -> III auf Aufgabenebene
 //   Ue-4 Punkte: jede aufgabe ohne Teilaufgaben und jede teilaufgabe > 0;
