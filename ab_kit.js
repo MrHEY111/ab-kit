@@ -883,6 +883,9 @@ function specPruefen(spec) {
 //       merksatz mit scaffold) — Default Pflicht, Opt-out nur ausdruecklich
 //       ueber `bauplan: {scaffold: false}` auf Spec-Ebene
 //   A-5 genau eine Sprinteraufgabe (sprinter), nach dem Merksatz-Anschluss
+//   A-4 (Blatt, Kit 1.7): ueber alle Seiten genau eine stundenfrage,
+//       hoechstens ein sprinter und ein ritual kanon: punkt — sonst tragen
+//       zwei Bloecke ein Blatt; auf getrennte Specs aufteilen
 // Seiten ohne stundenfrage und ohne aufgabe (Fortsetzungs-/Infoseiten) werden
 // uebersprungen. Specs ohne afb-Angaben bekommen nur die Strukturpruefung
 // (A-4/A-5) und einen Hinweis, dass die AFB-Kette nicht pruefbar ist.
@@ -1087,6 +1090,25 @@ function bauplanPruefen(spec) {
       .map((e) => e.nr);
     if (ohneBezug.length) m("A-2", `Aufgabe(n) ohne bezug: ${ohneBezug.join(", ")} — nennen, worauf die SuS in diesem Moment schauen.`);
   });
+
+  // ---- A-4 (Blatt, Kit 1.7): ein Blatt, eine Stundenfrage. Ueber ALLE Seiten
+  // zaehlen — Vorder-/Rueckseite eines Blocks sind legitim, zwei Bloecke auf
+  // einem Blatt nicht (Anlass: AB_Wasserbestandteile_GR v2.2 mit B3 und B4).
+  // Laeuft nur, wenn die Spec ueberhaupt eine Stundenseite hat; reine
+  // Ablaufplaene ohne aufgabe und stundenfrage bleiben wie bisher stumm.
+  // Fehlende Stundenfrage meldet weiterhin die Seitenpruefung oben.
+  const alle = (spec.seiten || []).flatMap((s) => elementeFlach(s.elemente));
+  if (alle.some((e) => e.typ === "aufgabe" || e.typ === "stundenfrage")) {
+    const zaehl = (pred) => alle.filter(pred).length;
+    const nSF = zaehl((e) => e.typ === "stundenfrage");
+    const nSprinter = zaehl((e) => e.typ === "sprinter");
+    const nPunkt = zaehl((e) => e.typ === "ritual" && e.kanon === "punkt");
+    const grund = "— ein Blatt, eine Stundenfrage (AB_Qualitaet.md, A-4). Blöcke auf getrennte Specs aufteilen.";
+    const blatt = (text) => befunde.push(`Bauplan A-4 · Blatt: ${text} ${grund}`);
+    if (nSF > 1) blatt(`Blatt trägt ${nSF} Stundenfragen`);
+    if (nSprinter > 1) blatt(`Blatt trägt ${nSprinter} Sprinteraufgaben`);
+    if (nPunkt > 1) blatt(`Blatt trägt ${nPunkt} Merksatz-Rituale (ritual kanon: punkt)`);
+  }
   return befunde;
 }
 

@@ -1,6 +1,6 @@
 # AB-Kit — Arbeitsblätter und Lösungen aus einer Spec
 
-Kit-Version: siehe `KIT_VERSION` · Stand 07.09.2026 · Repo: `https://github.com/mrhey111/ab-kit` (öffentlich, kanonisch) · Arbeitskopie Windows: `C:\dev\ab_kit\` (Klon)
+Kit-Version: siehe `KIT_VERSION` · Stand 08.09.2026 · Repo: `https://github.com/mrhey111/ab-kit` (öffentlich, kanonisch) · Arbeitskopie Windows: `C:\dev\ab_kit\` (Klon)
 <!-- schema-bindung: v1.15 (2026-09-07) -->
 
 Ein Renderer, alle Unterschiede zwischen Blättern stehen in der Spec. Pro
@@ -342,12 +342,22 @@ Teil A geprüft. Einheit ist eine Seite der Spec (= eine Stunde); Seiten ohne
 Nur Warnungen, nie Abbruch — der Check fängt Strukturfehler, die
 Prüffragen in Teil A ersetzt er nicht.
 
+Seit Kit 1.7 zählt der Check zusätzlich **über alle Seiten** (A-4, Blatt):
+genau eine `stundenfrage`, höchstens ein `sprinter`, höchstens ein
+`ritual` mit `kanon: punkt`. Vorder- und Rückseite eines Blocks sind damit
+weiter legitim (`seiten` mit mehreren Einträgen), zwei Blöcke auf einem
+Blatt nicht — Warnung „Blatt trägt N Stundenfragen — ein Blatt, eine
+Stundenfrage (AB_Qualitaet.md, A-4). Blöcke auf getrennte Specs
+aufteilen." Die Blattzählung läuft nur, wenn die Spec überhaupt eine
+Stundenseite hat; reine Ablaufpläne bleiben stumm, eine fehlende
+Stundenfrage meldet weiterhin die Seitenprüfung.
+
 | Element | Prüfung | Woran der Check es erkennt |
 |---|---|---|
 | A-1 Anknüpfung | erste Aufgabe weist ihren Bezug aus | `bezug:` an der ersten `aufgabe` |
 | A-2 Materialbezug | jede AFB-I/II-Aufgabe nennt ihre Quelle | `bezug:` an jeder `aufgabe` mit `afb: I` oder `II` |
 | A-3 AFB-Progression | Start mit I, mindestens eine II, kein Rückfall, III nicht als nummerierte Aufgabe | `afb:` je `aufgabe` in Dokumentreihenfolge (auch innerhalb von `nebeneinander`) |
-| A-4 Stundenfrage und Merksatz | `stundenfrage` vorhanden; Merksatz-Anschluss (`ritual kanon: punkt` oder `merksatz`) hinter der letzten Aufgabe; verdeckter Scaffold vorhanden | `notanker` oder `merksatz` mit `scaffold`; Opt-out **nur** ausdrücklich über `bauplan: {scaffold: false}` |
+| A-4 Stundenfrage und Merksatz | `stundenfrage` vorhanden; Merksatz-Anschluss (`ritual kanon: punkt` oder `merksatz`) hinter der letzten Aufgabe; verdeckter Scaffold vorhanden; **Blatt (1.7):** über alle Seiten genau eine `stundenfrage`, höchstens ein `sprinter` und ein `ritual kanon: punkt` | `notanker` oder `merksatz` mit `scaffold`; Opt-out **nur** ausdrücklich über `bauplan: {scaffold: false}`; Blattzählung über `seiten` hinweg |
 | A-5 Sprinteraufgabe | genau ein `sprinter`, nach dem Merksatz-Anschluss, keine Aufgaben danach | Elementreihenfolge |
 
 Specs ohne `afb:`-Angaben (Bestand vor 1.2) bekommen nur die Strukturprüfung
@@ -427,6 +437,18 @@ Seite 2 mit elf Befunden).
 
 ## Änderungsprotokoll
 
+- **1.7 (08.09.2026)** — `--check` erkennt Specs, die mehr als einen Block
+  tragen (A-4, Blatt): über alle `seiten` hinweg genau eine `stundenfrage`,
+  höchstens ein `sprinter`, höchstens ein `ritual kanon: punkt`; Abweichung =
+  Warnung „Blatt trägt N … — ein Blatt, eine Stundenfrage (AB_Qualitaet.md,
+  A-4). Blöcke auf getrennte Specs aufteilen.“ Nur `dokumenttyp: ab`; die
+  Seitenprüfung A-4/A-5 bleibt unverändert. Läuft nur für Specs mit
+  mindestens einer Stundenseite, reine Ablaufpläne bleiben stumm. Anlass:
+  `AB_Wasserbestandteile_GR` v2.2 trägt B3 und B4 auf einem Blatt — zwei
+  Stundenfragen, zwei Sprinter, zwei Merksatz-Rituale, von 1.6 nicht gemeldet.
+  Kein Rendering, kein Spec-Schema betroffen; Specs mit `kit_version: "1.6"`
+  bauen unverändert (Minor). R-006 (Blatttitel ≠ Merksatz) bleibt bewusst
+  manuelle Prüffrage.
 - **1.6 (07.09.2026)** — `teilaufgabe` zitiert wie `aufgabe`: `zitat: true` ohne
   `text`, aber mit `buchstabe`, holt den Wortlaut aus `ab_spec`, gematcht unter
   der vorangehenden `aufgabe` gleicher `nr` (Anker = zuletzt gesehene Aufgabe
