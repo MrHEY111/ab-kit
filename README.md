@@ -221,7 +221,7 @@ wurde. Ein wirklich neuer Typ braucht eine Renderer-Erweiterung in
 | `kennlinien` | `breite`, `hoehe`, `x_max`, `x_schritt`, `y_max`, `y_schritt`, `reihen: [{name, u, i, farbe, marker, kurve: gerade\|potenz\|keine}]` |
 | `bilddatei` | `pfad`, `breite`, `beschnitt: {links, oben, rechts, unten}` (Anteile 0..1), `graustufen`, `autokontrast`, `cutoff`, `rahmen`, `rahmenfarbe` |
 | `schaltbild` | `breite`, `hoehe`, `reihe: [{bauteil, label, zustand, zellen, pole, umgekehrt, farbe, seite} \| {zweige: [[…], […]], seite}]`, `zweigabstand`, `farbe` | Kit 1.4: Schaltplan aus Bauteilen + Topologie, siehe unten |
-| `kreislauf` | `breite`, `hoehe`, `oben`, `unten`, `rechts: {label}`, `links: {label}`, `feld: [b, h]`, `aussenrand`, `pt`, `farbe` | Kit 1.9: Stoffkreislauf aus zwei Kästen und zwei Pfeilen mit Beschriftungskästchen, siehe unten |
+| `kreislauf` | `breite`, `hoehe`, `stationen: [2..4]`, `pfeile: [{label}]` — oder Kurzform `oben`, `unten`, `rechts: {label}`, `links: {label}`; `feld: [b, h]`, `aussenrand`, `pt`, `farbe` | Kit 1.9: Stoffkreislauf mit 2 bis 4 Stationen im Umlauf, Beschriftungskästchen je Übergang, siehe unten |
 
 `bilddatei` bindet ein vorhandenes Bild ein (Foto, Scan, extern erzeugtes PNG)
 statt es zu zeichnen — der Zuschnitt steht damit in der Spec, nicht in einer
@@ -298,14 +298,14 @@ Bauteilkatalog: `_build\specs\schaltbild_test.spec.yaml`.
 
 ### Asset-Typ `kreislauf` (Kit 1.9)
 
-Stoffkreislauf aus zwei Kästen (oben/unten) und zwei Pfeilen im Uhrzeigersinn:
-rechts abwärts (oben → unten), links aufwärts (unten → oben). Auf jeder
-Pfeilmitte sitzt ein Beschriftungskästchen — leer zum Eintragen oder mit
-`label`. Links und rechts bleibt ein freier Rand (`aussenrand`), in dem die
-SuS eigene Pfeile ergänzen (im Erstfall die Energiezufuhr und -abgabe).
+Stoffkreislauf (Kreisprozess) mit 2 bis 4 Stationen im Umlauf, Uhrzeigersinn,
+erste Station oben. Auf jedem Übergang sitzt ein Beschriftungskästchen — leer
+zum Eintragen oder mit `label`. Links und rechts bleibt ein freier Rand
+(`aussenrand`), in dem die SuS eigene Pfeile ergänzen (im Erstfall die
+Energiezufuhr und -abgabe).
 
 ```yaml
-kreislauf_b6:
+kreislauf_b6:                 # Kurzform, zwei Stationen (CH-09.WAS-B6)
   typ: kreislauf
   breite: 430                 # Anzeigebreite px (Default 430), hoehe Default 205
   oben: "Wasser"
@@ -314,27 +314,52 @@ kreislauf_b6:
   links: {label: ""}          # Pfeil unten -> oben
   feld: [112, 30]             # Beschriftungskästchen Breite x Höhe (Default)
   aussenrand: 46              # freier Rand links und rechts (Default)
+wasserkreislauf:              # Langform, 2 bis 4 Stationen
+  typ: kreislauf
+  breite: 480
+  hoehe: 240
+  stationen: ["Meer", "Wolken", "Regen", "Fluss"]
+  pfeile:                     # je Übergang ein Eintrag, Station 1 -> 2 zuerst
+    - {label: "Verdunstung"}
+    - {label: "Kondensation"}
+    - {label: "Niederschlag"}
+    - {label: "Abfluss"}      # letzte Station -> erste, der Umlauf schließt sich
 ```
 
 | Feld | Bedeutung | Default |
 |---|---|---|
+| `stationen` | Langform: Liste der Stationstexte (fett, einzeilig), 2 bis 4 | Pflicht (Langform) |
+| `pfeile` | Langform: je Übergang `{label: "…"}`, genau so viele Einträge wie `stationen`; fehlt der Block, entstehen leere Kästchen | leer |
+| `oben`, `unten`, `rechts`, `links` | Kurzform für zwei Stationen: Kastentexte und `{label: "…"}` für den rechten (abwärts) bzw. linken (aufwärts) Pfeil; rendert bitgleich zu `stationen: [oben, unten]`, `pfeile: [rechts, links]`. Mischung mit der Langform = Abbruch | — |
 | `breite`, `hoehe` | Anzeigegröße px | 430 × 205 |
-| `oben`, `unten` | Text der beiden Kästen (fett, einzeilig); die Kastenbreite folgt dem Text | Pflicht |
-| `rechts`, `links` | `{label: "…"}` — Beschriftung auf dem rechten (abwärts) bzw. linken (aufwärts) Pfeil; fehlend oder leer = leeres Kästchen | leer |
 | `feld` | `[breite, hoehe]` des Beschriftungskästchens | `[112, 30]` |
-| `aussenrand` | freier Rand links und rechts, außerhalb der Pfeile | 46 |
-| `pt` | Schriftgröße in Punkt (Kästen fett, Labels regular) | 10 |
+| `aussenrand` | freier Rand links und rechts, außerhalb der senkrechten Leitungen | 46 |
+| `pt` | Schriftgröße in Punkt (Stationen fett, Labels regular) | 10 |
 | `farbe` | Linien- und Schriftfarbe (Hex) | `1A1A1A` |
 
-Zeichenregeln wie bei `schaltbild`: nur waagerechte und senkrechte Leitungen,
-rechte Winkel, Labels aufrecht. Die senkrechten Leitungen liegen bei
-`aussenrand + feld[0]/2` von jedem Rand; ein Kastentext muss zwischen ihnen
-Platz finden (bei den Defaults rund 200 px), sonst laufen die waagerechten
-Pfeilstücke durch den Text — der Generator kappt die Kastenbreite erst bei
-`2·(x_r − 14)`, was bei den Defaults über der Bildbreite liegt (Stand 1.9,
-1:1 aus der Vorstufe übernommen). Labels werden nicht gegen `feld` geprüft.
-Testfälle: `_build\specs\kreislauf_test.spec.yaml` (B6-Fall, Labels,
-abweichende `pt`/`feld`/`aussenrand`, langer `unten`-Text).
+**Anordnung.** 2 Stationen: oben/unten, Pfeile rechts abwärts und links
+aufwärts, Kästchen auf halber Höhe (das B6-Bild). 3 Stationen: Dreieck —
+oben Mitte, unten rechts, unten links; die Übergänge 1 → 2 und 3 → 1 laufen
+mit einer Ecke über die senkrechten Leitungen, 2 → 3 waagerecht unten.
+4 Stationen: Rechteck — Stationen in den Ecken, alle Übergänge gerade. Die
+senkrechten Leitungen liegen bei `aussenrand + feld[0]/2`; Eckstationen (3
+und 4) sind auf diese Leitungen zentriert und ragen in den Außenrand hinein.
+
+**Zeichenregeln, fest verdrahtet** (wie `schaltbild`): nur waagerechte und
+senkrechte Leitungen, rechte Winkel, Labels aufrecht, Kästchen auf der Mitte
+eines geraden Stücks und nie in einer Ecke, mindestens 14 px Leitung vor
+jedem Kasten und Kästchen. Reicht der Platz nicht, bricht der Generator mit
+Angabe der Seite ab statt still zu überlappen: Kasten breiter als der Abstand
+zwischen den Leitungen (Seite `oben`/`unten`, bei den Defaults 198 px), zwei
+Kästen plus Kästchen breiter als die Seite, Kasten über dem Bildrand
+(`links`/`rechts`), Label breiter als `feld`, senkrechte Leitung kürzer als
+`feld[1]` + 28 px (`hoehe`). Die Abhilfe steht in der Meldung (`breite`/
+`hoehe` erhöhen, `aussenrand`/`feld` verkleinern, Text kürzen).
+
+Testfälle: `_build\specs\kreislauf_test.spec.yaml` (B6 in Kurz- und Langform,
+bitgleich; Labels; abweichende `pt`/`feld`/`aussenrand`; drei und vier
+Stationen) und `_build\specs\kreislauf_fehler_*.spec.yaml` (neun
+Abbruchfälle).
 
 ## Aufgabenzitate aus der AB-Spec (Kit 1.5)
 
@@ -531,21 +556,32 @@ Bedarf neu anzulegen (`_build\specs` ist gitignored).
 
 ## Änderungsprotokoll
 
-- **1.9 (09.09.2026)** — Neuer Asset-Typ `kreislauf` in `ab_assets.py`:
-  Stoffkreislauf aus zwei Kästen (`oben`/`unten`) und zwei Pfeilen (rechts
-  abwärts, links aufwärts) mit je einem Beschriftungskästchen auf der
-  Pfeilmitte, außen freier Rand (`aussenrand`) für eigene Eintragungen.
-  Übernahme 1:1 aus der Vorstufe `Python_Skripte\CH-09.WAS\kreislauf_gen.py`
-  (09.09.2026); das Kit-PNG `kreislauf_b6` ist bitgleich zum Skript-PNG
-  (SHA-256 `cea530be…`). Die Aufnahmeregel „beim zweiten Bedarf" wurde hier
-  bewusst übersprungen (Entscheidung 09.09.2026). Anlass: CH-09.WAS-B6
+- **1.9 (09.09.2026)** — Neuer Asset-Typ `kreislauf` in `ab_assets.py`,
+  zwei Commits. **Teil 1:** Stoffkreislauf aus zwei Kästen (`oben`/`unten`)
+  und zwei Pfeilen (rechts abwärts, links aufwärts) mit je einem
+  Beschriftungskästchen, außen freier Rand (`aussenrand`); Übernahme 1:1 aus
+  der Vorstufe `Python_Skripte\CH-09.WAS\kreislauf_gen.py`, das Kit-PNG
+  `kreislauf_b6` ist bitgleich zum Skript-PNG (SHA-256 `cea530be…`). Die
+  Aufnahmeregel „beim zweiten Bedarf" wurde bewusst übersprungen
+  (Entscheidung 09.09.2026). **Teil 2:** Erweiterung auf 2 bis 4 Stationen
+  (`stationen`, `pfeile`), Uhrzeigersinn, erste Station oben; 3 Stationen
+  als Dreieck, 4 als Rechteck; Kurzform `oben`/`unten`/`rechts`/`links`
+  bleibt gültig und rendert bitgleich (Hash geprüft), Mischung beider Formen
+  bricht ab. Platzprüfung vor dem Zeichnen mit Abbruch und Seitenangabe
+  (Kasten zu breit, Kasten über dem Bildrand, Label breiter als `feld`,
+  Leitung zu kurz) — sie gilt auch für die Kurzform: Specs, die unter Teil 1
+  sichtbar überlappten (Kastentext breiter als der Leitungsabstand, Label
+  breiter als `feld`), brechen jetzt ab statt ein unbrauchbares PNG zu
+  liefern; fehlerfreie Specs rendern unverändert. Anlass: CH-09.WAS-B6
   `AB_Wasserauto_GR` (Wasser ⇄ Wasserstoff + Sauerstoff), bis dahin über
-  `typ: bilddatei` eingebunden. Übrige Asset-Typen und `ab_kit.js`
+  `typ: bilddatei` eingebunden; Ziel des Plurals „Kreisprozesse": Wasser-,
+  Kohlenstoff-, Stickstoffkreislauf. Übrige Asset-Typen und `ab_kit.js`
   unverändert; Neubau aller 19 Archiv-Specs liefert bitgleiche PNGs,
   Sidecars und `word/document.xml`, `--check`-Ausgabe bis auf die
-  Kit-Versionsnummer unverändert (geprüft 09.09.2026). Testfälle
-  `_build\specs\kreislauf_test.spec.yaml`. Specs mit `kit_version: "1.8"`
-  und älter (1.x) bauen unverändert (Minor).
+  Kit-Versionsnummer unverändert (geprüft 09.09.2026, nach beiden Teilen).
+  Testfälle `_build\specs\kreislauf_test.spec.yaml` und
+  `kreislauf_fehler_*.spec.yaml`. Specs mit `kit_version: "1.8"` und älter
+  (1.x) bauen unverändert (Minor).
 - **1.8 (08.09.2026)** — Neuer Dokumenttyp `uebung` (Übungsblatt wie eine
   Arbeit): `punkte` an `aufgabe`/`teilaufgabe`, rechtsbündig gerendert;
   Kasten `afb3_hinweis` vor der ersten AFB-III-Aufgabe; Untertitel-Default

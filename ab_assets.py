@@ -19,7 +19,7 @@ Generatoren (Feld `typ` je Asset):
     kennlinien   U-I-Diagramm mit Messreihen und Ausgleichskurven (Loesung)
     bilddatei    vorhandene Bilddatei (Foto, Scan) mit Zuschnitt und Graustufen
     schaltbild   Schaltplan aus Bauteilliste und Topologie (Reihe, Zweige)
-    kreislauf    Stoffkreislauf: zwei Kaesten, zwei Pfeile mit Beschriftungsfeldern
+    kreislauf    Stoffkreislauf, 2 bis 4 Stationen im Umlauf, Beschriftungsfelder je Pfeil
 
 Fallen, die hier gekapselt sind (siehe README.md):
   - Alle PNGs RGB, nie RGBA (RGBA laesst den docx-Render abstuerzen).
@@ -1030,17 +1030,67 @@ def gen_schaltbild(a):
 
 def gen_kreislauf(a):
     """
+    Stoffkreislauf mit 2 bis 4 Stationen im Umlauf (Uhrzeigersinn, erste
+    Station oben) und einem Beschriftungskaestchen auf jedem Uebergang.
+    Aussen bleibt ein freier Rand, in den die SuS eigene Pfeile eintragen.
+
+    Langform:
+      stationen:  Liste der Stationstexte, 2 bis 4 (Pflicht)
+      pfeile:     je Uebergang ein {label: "..."} — Station 1 -> 2, 2 -> 3,
+                  ..., letzte -> 1 (Umlauf schliesst sich). Genau so viele
+                  Eintraege wie stationen; fehlt der Block: leere Kaestchen.
+    Kurzform (Zweistationen-Fall, rendert bitgleich zur Vorstufe
+    kreislauf_gen.py vom 09.09.2026):
+      oben, unten:    Text in den beiden Kaesten
+      rechts, links:  je {label: "..."} — rechter (abwaerts) bzw. linker
+                      (aufwaerts) Pfeil; fehlendes oder leeres label = leeres
+                      Kaestchen zum Eintragen
+    Kurz- und Langform gemischt = Abbruch.
+
     breite, hoehe:  Anzeigegroesse px (Default 430 x 205)
-    oben, unten:    Text in den beiden Kaesten (Pflicht)
-    rechts, links:  je {label: "..."} — Beschriftung auf dem rechten
-                    (abwaerts) bzw. linken (aufwaerts) Pfeil. Fehlendes oder
-                    leeres label = leeres Kaestchen zum Eintragen.
     feld:           [breite, hoehe] des Beschriftungskaestchens (Default 112 x 30)
-    aussenrand:     freier Rand links und rechts fuer eigene Eintragungen
-                    (Default 46) — dort zeichnen die SuS die Energiepfeile.
+    aussenrand:     freier Rand links und rechts (Default 46); die senkrechten
+                    Leitungen liegen bei aussenrand + feld[0]/2
     pt:             Schriftgroesse in Punkt (Default 10)
     farbe:          Linienfarbe (Default 1A1A1A)
+
+    Anordnung: 2 Stationen oben/unten, 3 Stationen Dreieck (oben, unten
+    rechts, unten links), 4 Stationen Rechteck (Ecken). Nur waagerechte und
+    senkrechte Leitungen, rechte Winkel, Labels aufrecht, kein Kaestchen in
+    einer Ecke. Reicht der Platz nicht (Kasten breiter als der Leitungs-
+    abstand, Kasten ueber dem Bildrand, Label breiter als feld, Leitung
+    kuerzer als das Kaestchen), Abbruch mit Angabe der Seite.
     """
+    kurz = [k for k in ("oben", "unten", "rechts", "links") if k in a]
+    lang = [k for k in ("stationen", "pfeile") if k in a]
+    if kurz and lang:
+        sys.exit("Abbruch: kreislauf — Kurzform (" + ", ".join(kurz) + ") und "
+                 "Langform (" + ", ".join(lang) + ") gemischt. Entweder "
+                 "oben/unten/rechts/links oder stationen/pfeile.")
+    if lang:
+        st = a.get("stationen")
+        if not isinstance(st, list) or not 2 <= len(st) <= 4:
+            sys.exit("Abbruch: kreislauf — 'stationen' braucht 2 bis 4 Eintraege, "
+                     f"hat {len(st) if isinstance(st, list) else st!r}.")
+        st = [str(x) for x in st]
+        pf = a.get("pfeile")
+        if pf is None:
+            pf = [{} for _ in st]
+        if not isinstance(pf, list) or len(pf) != len(st):
+            sys.exit(f"Abbruch: kreislauf — 'pfeile' braucht genau {len(st)} "
+                     "Eintraege (einen je Uebergang, Station 1 -> 2 zuerst), hat "
+                     f"{len(pf) if isinstance(pf, list) else pf!r}.")
+        for p in pf:
+            if p is not None and not isinstance(p, dict):
+                sys.exit("Abbruch: kreislauf — Eintrag in 'pfeile' muss ein "
+                         f"Mapping {{label: ...}} sein: {p!r}")
+        labels = [str((p or {}).get("label", "") or "") for p in pf]
+    else:
+        st = [str(a.get("oben", "")), str(a.get("unten", ""))]
+        labels = [str((a.get(seite) or {}).get("label", "") or "")
+                  for seite in ("rechts", "links")]
+    n = len(st)
+
     W_PT = a.get("breite", 430)
     H_PT = a.get("hoehe", 205)
     W, H = s(W_PT), s(H_PT)
@@ -1050,10 +1100,12 @@ def gen_kreislauf(a):
     f_r = font("regular", pt)
     lw = int(round(1.6 * SCALE))
     ah = s(6)                                   # Pfeilspitze
+    A = ah * 1.7                                # Laenge der Spitze
 
     fw_pt, fh_pt = (a.get("feld") or [112, 30])[:2]
     fw, fh = s(fw_pt), s(fh_pt)
     rand = s(a.get("aussenrand", 46))
+    g = s(14)                                   # Mindestlaenge Leitung vor Kasten/Kaestchen
 
     img = Image.new("RGB", (W, H), "white")
     d = ImageDraw.Draw(img)
@@ -1061,22 +1113,86 @@ def gen_kreislauf(a):
     cx = W / 2
     pad_x, pad_y = s(10), s(6)
     bh = int(round(pt * SCALE * 96 / 72)) + 2 * pad_y
-    y_o = s(3) + bh / 2                         # Mitte oberer Kasten
-    y_u = H - s(3) - bh / 2                     # Mitte unterer Kasten
+    y_o = s(3) + bh / 2                         # Mitte obere Kaesten
+    y_u = H - s(3) - bh / 2                     # Mitte untere Kaesten
     x_r = W - rand - fw / 2                     # senkrechte Leitung rechts
     x_l = rand + fw / 2                         # senkrechte Leitung links
 
-    def kasten(txt, ym):
-        bw = d.textlength(txt, font=f_b) + 2 * pad_x
-        bw = min(bw, 2 * (x_r - s(14)))
-        x0, x1 = cx - bw / 2, cx + bw / 2
+    if n == 2:
+        pos = [(cx, y_o), (cx, y_u)]
+    elif n == 3:
+        pos = [(cx, y_o), (x_r, y_u), (x_l, y_u)]
+    else:
+        pos = [(x_l, y_o), (x_r, y_o), (x_r, y_u), (x_l, y_u)]
+
+    # --- Platzpruefung vor dem Zeichnen: Abbruch statt stiller Ueberlappung
+    bw = [d.textlength(txt, font=f_b) + 2 * pad_x for txt in st]
+
+    def px(v):
+        return f"{v / SCALE:.0f} px"
+
+    def mittig(i, seite):
+        frei = 2 * (x_r - cx - g)
+        if bw[i] > frei:
+            sys.exit(f"Abbruch: kreislauf — Kasten '{st[i]}' ({px(bw[i])}) zu breit "
+                     f"fuer die Seite '{seite}' ({px(frei)} zwischen den Leitungen): "
+                     "breite erhoehen, aussenrand/feld verkleinern oder Text kuerzen.")
+
+    def paar(i, j, seite):
+        frei = (x_r - x_l) - fw - 2 * g
+        if bw[i] / 2 + bw[j] / 2 > frei:
+            sys.exit(f"Abbruch: kreislauf — Kaesten '{st[i]}' und '{st[j]}' lassen auf "
+                     f"der Seite '{seite}' keinen Platz fuer das Kaestchen "
+                     f"({px(bw[i] / 2 + bw[j] / 2)} belegt, {px(frei)} frei): breite "
+                     "erhoehen, aussenrand/feld verkleinern oder Text kuerzen.")
+
+    def bildrand(i, seite):
+        x, _ = pos[i]
+        if x - bw[i] / 2 < s(3) or x + bw[i] / 2 > W - s(3):
+            sys.exit(f"Abbruch: kreislauf — Kasten '{st[i]}' ({px(bw[i])}) ragt auf der "
+                     f"Seite '{seite}' ueber den Bildrand: breite oder aussenrand "
+                     "erhoehen oder Text kuerzen.")
+
+    def leitung(laenge, seite):
+        if laenge < fh + 2 * g:
+            sys.exit(f"Abbruch: kreislauf — hoehe {H_PT} zu klein: die Leitung "
+                     f"'{seite}' ({px(laenge)}) fasst das Kaestchen ({fh_pt} px) "
+                     f"plus 2 x 14 px nicht.")
+
+    if n == 2:
+        mittig(0, "oben")
+        mittig(1, "unten")
+        leitung(y_u - y_o, "rechts")
+    elif n == 3:
+        mittig(0, "oben")
+        paar(1, 2, "unten")
+        bildrand(1, "rechts")
+        bildrand(2, "links")
+        leitung((y_u - bh / 2) - y_o, "rechts")
+    else:
+        paar(0, 1, "oben")
+        paar(2, 3, "unten")
+        bildrand(0, "links")
+        bildrand(1, "rechts")
+        bildrand(2, "rechts")
+        bildrand(3, "links")
+        leitung((y_u - bh / 2) - (y_o + bh / 2), "rechts")
+    pad_l = s(5)
+    for label in labels:
+        if label and d.textlength(label, font=f_r) + 2 * pad_l > fw:
+            sys.exit(f"Abbruch: kreislauf — Label '{label}' "
+                     f"({px(d.textlength(label, font=f_r) + 2 * pad_l)}) passt nicht in "
+                     f"feld {fw_pt} px: feld verbreitern oder Label kuerzen.")
+
+    # --- Stationen
+    def kasten(txt, xm, ym, w):
+        x0, x1 = xm - w / 2, xm + w / 2
         d.rounded_rectangle([x0, ym - bh / 2, x1, ym + bh / 2], radius=s(5),
                             outline=col, width=lw, fill="white")
-        d.text((cx, ym), txt, font=f_b, fill=col, anchor="mm")
-        return x0, x1
+        d.text((xm, ym), txt, font=f_b, fill=col, anchor="mm")
+        return x0, x1, ym - bh / 2, ym + bh / 2
 
-    xo0, xo1 = kasten(str(a.get("oben", "")), y_o)
-    xu0, xu1 = kasten(str(a.get("unten", "")), y_u)
+    kanten = [kasten(st[i], *pos[i], bw[i]) for i in range(n)]
 
     def spitze(p, richtung):
         x, y = p
@@ -1092,22 +1208,48 @@ def gen_kreislauf(a):
     def weg(pts):
         d.line(pts, fill=col, width=lw, joint="curve")
 
-    # rechter Pfeil: oberer Kasten -> rechts -> abwaerts -> unterer Kasten
-    weg([(xo1, y_o), (x_r, y_o), (x_r, y_u), (xu1 + ah * 1.7, y_u)])
-    spitze((xu1 + s(1), y_u), "links")
+    # --- Pfeile im Uhrzeigersinn; Kaestchen auf der Mitte eines geraden
+    #     Stuecks, nie in einer Ecke
+    if n == 2:
+        (xo0, xo1, _, _), (xu0, xu1, _, _) = kanten
+        # rechter Pfeil: oberer Kasten -> rechts -> abwaerts -> unterer Kasten
+        weg([(xo1, y_o), (x_r, y_o), (x_r, y_u), (xu1 + A, y_u)])
+        spitze((xu1 + s(1), y_u), "links")
+        # linker Pfeil: unterer Kasten -> links -> aufwaerts -> oberer Kasten
+        weg([(xu0, y_u), (x_l, y_u), (x_l, y_o), (xo0 - A, y_o)])
+        spitze((xo0 - s(1), y_o), "rechts")
+        ym = (y_o + y_u) / 2
+        felder = [(x_r, ym), (x_l, ym)]
+    elif n == 3:
+        (xo0, xo1, _, _), (xr0, xr1, yr0, _), (xl0, xl1, yl0, _) = kanten
+        weg([(xo1, y_o), (x_r, y_o), (x_r, yr0 - A)])
+        spitze((x_r, yr0 - s(1)), "unten")
+        weg([(xr0, y_u), (xl1 + A, y_u)])
+        spitze((xl1 + s(1), y_u), "links")
+        weg([(x_l, yl0), (x_l, y_o), (xo0 - A, y_o)])
+        spitze((xo0 - s(1), y_o), "rechts")
+        felder = [(x_r, (y_o + yr0) / 2), ((xr0 + xl1) / 2, y_u),
+                  (x_l, (yl0 + y_o) / 2)]
+    else:
+        (a0, a1, ay0, ay1), (b0, b1, by0, by1), (c0, c1, cy0, cy1), \
+            (e0, e1, ey0, ey1) = kanten
+        weg([(a1, y_o), (b0 - A, y_o)])
+        spitze((b0 - s(1), y_o), "rechts")
+        weg([(x_r, by1), (x_r, cy0 - A)])
+        spitze((x_r, cy0 - s(1)), "unten")
+        weg([(c0, y_u), (e1 + A, y_u)])
+        spitze((e1 + s(1), y_u), "links")
+        weg([(x_l, ey0), (x_l, ay1 + A)])
+        spitze((x_l, ay1 + s(1)), "oben")
+        felder = [((a1 + b0) / 2, y_o), (x_r, (by1 + cy0) / 2),
+                  ((c0 + e1) / 2, y_u), (x_l, (ey0 + ay1) / 2)]
 
-    # linker Pfeil: unterer Kasten -> links -> aufwaerts -> oberer Kasten
-    weg([(xu0, y_u), (x_l, y_u), (x_l, y_o), (xo0 - ah * 1.7, y_o)])
-    spitze((xo0 - s(1), y_o), "rechts")
-
-    # Beschriftungskaestchen auf der Pfeilmitte
-    ym = (y_o + y_u) / 2
-    for x, seite in ((x_r, "rechts"), (x_l, "links")):
-        d.rectangle([x - fw / 2, ym - fh / 2, x + fw / 2, ym + fh / 2],
+    # Beschriftungskaestchen
+    for (x, y), label in zip(felder, labels):
+        d.rectangle([x - fw / 2, y - fh / 2, x + fw / 2, y + fh / 2],
                     outline=col, width=lw, fill="white")
-        label = str((a.get(seite) or {}).get("label", "") or "")
         if label:
-            d.text((x, ym), label, font=f_r, fill=col, anchor="mm")
+            d.text((x, y), label, font=f_r, fill=col, anchor="mm")
     return img
 
 
