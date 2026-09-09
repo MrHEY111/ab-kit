@@ -19,6 +19,7 @@ Generatoren (Feld `typ` je Asset):
     kennlinien   U-I-Diagramm mit Messreihen und Ausgleichskurven (Loesung)
     bilddatei    vorhandene Bilddatei (Foto, Scan) mit Zuschnitt und Graustufen
     schaltbild   Schaltplan aus Bauteilliste und Topologie (Reihe, Zweige)
+    kreislauf    Stoffkreislauf: zwei Kaesten, zwei Pfeile mit Beschriftungsfeldern
 
 Fallen, die hier gekapselt sind (siehe README.md):
   - Alle PNGs RGB, nie RGBA (RGBA laesst den docx-Render abstuerzen).
@@ -1025,6 +1026,91 @@ def gen_schaltbild(a):
     return img
 
 
+# ----------------------------------------------------------- kreislauf ---
+
+def gen_kreislauf(a):
+    """
+    breite, hoehe:  Anzeigegroesse px (Default 430 x 205)
+    oben, unten:    Text in den beiden Kaesten (Pflicht)
+    rechts, links:  je {label: "..."} — Beschriftung auf dem rechten
+                    (abwaerts) bzw. linken (aufwaerts) Pfeil. Fehlendes oder
+                    leeres label = leeres Kaestchen zum Eintragen.
+    feld:           [breite, hoehe] des Beschriftungskaestchens (Default 112 x 30)
+    aussenrand:     freier Rand links und rechts fuer eigene Eintragungen
+                    (Default 46) — dort zeichnen die SuS die Energiepfeile.
+    pt:             Schriftgroesse in Punkt (Default 10)
+    farbe:          Linienfarbe (Default 1A1A1A)
+    """
+    W_PT = a.get("breite", 430)
+    H_PT = a.get("hoehe", 205)
+    W, H = s(W_PT), s(H_PT)
+    col = farbe(a.get("farbe"), (26, 26, 26))
+    pt = a.get("pt", 10)
+    f_b = font("bold", pt)
+    f_r = font("regular", pt)
+    lw = int(round(1.6 * SCALE))
+    ah = s(6)                                   # Pfeilspitze
+
+    fw_pt, fh_pt = (a.get("feld") or [112, 30])[:2]
+    fw, fh = s(fw_pt), s(fh_pt)
+    rand = s(a.get("aussenrand", 46))
+
+    img = Image.new("RGB", (W, H), "white")
+    d = ImageDraw.Draw(img)
+
+    cx = W / 2
+    pad_x, pad_y = s(10), s(6)
+    bh = int(round(pt * SCALE * 96 / 72)) + 2 * pad_y
+    y_o = s(3) + bh / 2                         # Mitte oberer Kasten
+    y_u = H - s(3) - bh / 2                     # Mitte unterer Kasten
+    x_r = W - rand - fw / 2                     # senkrechte Leitung rechts
+    x_l = rand + fw / 2                         # senkrechte Leitung links
+
+    def kasten(txt, ym):
+        bw = d.textlength(txt, font=f_b) + 2 * pad_x
+        bw = min(bw, 2 * (x_r - s(14)))
+        x0, x1 = cx - bw / 2, cx + bw / 2
+        d.rounded_rectangle([x0, ym - bh / 2, x1, ym + bh / 2], radius=s(5),
+                            outline=col, width=lw, fill="white")
+        d.text((cx, ym), txt, font=f_b, fill=col, anchor="mm")
+        return x0, x1
+
+    xo0, xo1 = kasten(str(a.get("oben", "")), y_o)
+    xu0, xu1 = kasten(str(a.get("unten", "")), y_u)
+
+    def spitze(p, richtung):
+        x, y = p
+        if richtung == "links":
+            d.polygon([(x, y), (x + ah * 1.7, y - ah), (x + ah * 1.7, y + ah)], fill=col)
+        elif richtung == "rechts":
+            d.polygon([(x, y), (x - ah * 1.7, y - ah), (x - ah * 1.7, y + ah)], fill=col)
+        elif richtung == "oben":
+            d.polygon([(x, y), (x - ah, y + ah * 1.7), (x + ah, y + ah * 1.7)], fill=col)
+        else:
+            d.polygon([(x, y), (x - ah, y - ah * 1.7), (x + ah, y - ah * 1.7)], fill=col)
+
+    def weg(pts):
+        d.line(pts, fill=col, width=lw, joint="curve")
+
+    # rechter Pfeil: oberer Kasten -> rechts -> abwaerts -> unterer Kasten
+    weg([(xo1, y_o), (x_r, y_o), (x_r, y_u), (xu1 + ah * 1.7, y_u)])
+    spitze((xu1 + s(1), y_u), "links")
+
+    # linker Pfeil: unterer Kasten -> links -> aufwaerts -> oberer Kasten
+    weg([(xu0, y_u), (x_l, y_u), (x_l, y_o), (xo0 - ah * 1.7, y_o)])
+    spitze((xo0 - s(1), y_o), "rechts")
+
+    # Beschriftungskaestchen auf der Pfeilmitte
+    ym = (y_o + y_u) / 2
+    for x, seite in ((x_r, "rechts"), (x_l, "links")):
+        d.rectangle([x - fw / 2, ym - fh / 2, x + fw / 2, ym + fh / 2],
+                    outline=col, width=lw, fill="white")
+        label = str((a.get(seite) or {}).get("label", "") or "")
+        if label:
+            d.text((x, ym), label, font=f_r, fill=col, anchor="mm")
+    return img
+
+
 GENERATOREN = {
     "scaffold": gen_scaffold,
     "balkenraster": gen_balkenraster,
@@ -1034,6 +1120,7 @@ GENERATOREN = {
     "kennlinien": gen_kennlinien,
     "bilddatei": gen_bilddatei,
     "schaltbild": gen_schaltbild,
+    "kreislauf": gen_kreislauf,
 }
 
 

@@ -221,6 +221,7 @@ wurde. Ein wirklich neuer Typ braucht eine Renderer-Erweiterung in
 | `kennlinien` | `breite`, `hoehe`, `x_max`, `x_schritt`, `y_max`, `y_schritt`, `reihen: [{name, u, i, farbe, marker, kurve: gerade\|potenz\|keine}]` |
 | `bilddatei` | `pfad`, `breite`, `beschnitt: {links, oben, rechts, unten}` (Anteile 0..1), `graustufen`, `autokontrast`, `cutoff`, `rahmen`, `rahmenfarbe` |
 | `schaltbild` | `breite`, `hoehe`, `reihe: [{bauteil, label, zustand, zellen, pole, umgekehrt, farbe, seite} \| {zweige: [[…], […]], seite}]`, `zweigabstand`, `farbe` | Kit 1.4: Schaltplan aus Bauteilen + Topologie, siehe unten |
+| `kreislauf` | `breite`, `hoehe`, `oben`, `unten`, `rechts: {label}`, `links: {label}`, `feld: [b, h]`, `aussenrand`, `pt`, `farbe` | Kit 1.9: Stoffkreislauf aus zwei Kästen und zwei Pfeilen mit Beschriftungskästchen, siehe unten |
 
 `bilddatei` bindet ein vorhandenes Bild ein (Foto, Scan, extern erzeugtes PNG)
 statt es zu zeichnen — der Zuschnitt steht damit in der Spec, nicht in einer
@@ -294,6 +295,46 @@ Seite nicht (40 px je Bauteil), bricht der Generator mit Angabe der Seite ab
 Testfälle mit den vier Akzeptanzplänen (PH-08.STK-B6 Reihenschaltung, B7
 Parallelschaltung, B5 Prüfstromkreis, PH-10.SGE-B3 nachgebaut) und einem
 Bauteilkatalog: `_build\specs\schaltbild_test.spec.yaml`.
+
+### Asset-Typ `kreislauf` (Kit 1.9)
+
+Stoffkreislauf aus zwei Kästen (oben/unten) und zwei Pfeilen im Uhrzeigersinn:
+rechts abwärts (oben → unten), links aufwärts (unten → oben). Auf jeder
+Pfeilmitte sitzt ein Beschriftungskästchen — leer zum Eintragen oder mit
+`label`. Links und rechts bleibt ein freier Rand (`aussenrand`), in dem die
+SuS eigene Pfeile ergänzen (im Erstfall die Energiezufuhr und -abgabe).
+
+```yaml
+kreislauf_b6:
+  typ: kreislauf
+  breite: 430                 # Anzeigebreite px (Default 430), hoehe Default 205
+  oben: "Wasser"
+  unten: "Wasserstoff  +  Sauerstoff"
+  rechts: {label: ""}         # Pfeil oben -> unten; leer = Kästchen zum Eintragen
+  links: {label: ""}          # Pfeil unten -> oben
+  feld: [112, 30]             # Beschriftungskästchen Breite x Höhe (Default)
+  aussenrand: 46              # freier Rand links und rechts (Default)
+```
+
+| Feld | Bedeutung | Default |
+|---|---|---|
+| `breite`, `hoehe` | Anzeigegröße px | 430 × 205 |
+| `oben`, `unten` | Text der beiden Kästen (fett, einzeilig); die Kastenbreite folgt dem Text | Pflicht |
+| `rechts`, `links` | `{label: "…"}` — Beschriftung auf dem rechten (abwärts) bzw. linken (aufwärts) Pfeil; fehlend oder leer = leeres Kästchen | leer |
+| `feld` | `[breite, hoehe]` des Beschriftungskästchens | `[112, 30]` |
+| `aussenrand` | freier Rand links und rechts, außerhalb der Pfeile | 46 |
+| `pt` | Schriftgröße in Punkt (Kästen fett, Labels regular) | 10 |
+| `farbe` | Linien- und Schriftfarbe (Hex) | `1A1A1A` |
+
+Zeichenregeln wie bei `schaltbild`: nur waagerechte und senkrechte Leitungen,
+rechte Winkel, Labels aufrecht. Die senkrechten Leitungen liegen bei
+`aussenrand + feld[0]/2` von jedem Rand; ein Kastentext muss zwischen ihnen
+Platz finden (bei den Defaults rund 200 px), sonst laufen die waagerechten
+Pfeilstücke durch den Text — der Generator kappt die Kastenbreite erst bei
+`2·(x_r − 14)`, was bei den Defaults über der Bildbreite liegt (Stand 1.9,
+1:1 aus der Vorstufe übernommen). Labels werden nicht gegen `feld` geprüft.
+Testfälle: `_build\specs\kreislauf_test.spec.yaml` (B6-Fall, Labels,
+abweichende `pt`/`feld`/`aussenrand`, langer `unten`-Text).
 
 ## Aufgabenzitate aus der AB-Spec (Kit 1.5)
 
@@ -490,6 +531,21 @@ Bedarf neu anzulegen (`_build\specs` ist gitignored).
 
 ## Änderungsprotokoll
 
+- **1.9 (09.09.2026)** — Neuer Asset-Typ `kreislauf` in `ab_assets.py`:
+  Stoffkreislauf aus zwei Kästen (`oben`/`unten`) und zwei Pfeilen (rechts
+  abwärts, links aufwärts) mit je einem Beschriftungskästchen auf der
+  Pfeilmitte, außen freier Rand (`aussenrand`) für eigene Eintragungen.
+  Übernahme 1:1 aus der Vorstufe `Python_Skripte\CH-09.WAS\kreislauf_gen.py`
+  (09.09.2026); das Kit-PNG `kreislauf_b6` ist bitgleich zum Skript-PNG
+  (SHA-256 `cea530be…`). Die Aufnahmeregel „beim zweiten Bedarf" wurde hier
+  bewusst übersprungen (Entscheidung 09.09.2026). Anlass: CH-09.WAS-B6
+  `AB_Wasserauto_GR` (Wasser ⇄ Wasserstoff + Sauerstoff), bis dahin über
+  `typ: bilddatei` eingebunden. Übrige Asset-Typen und `ab_kit.js`
+  unverändert; Neubau aller 19 Archiv-Specs liefert bitgleiche PNGs,
+  Sidecars und `word/document.xml`, `--check`-Ausgabe bis auf die
+  Kit-Versionsnummer unverändert (geprüft 09.09.2026). Testfälle
+  `_build\specs\kreislauf_test.spec.yaml`. Specs mit `kit_version: "1.8"`
+  und älter (1.x) bauen unverändert (Minor).
 - **1.8 (08.09.2026)** — Neuer Dokumenttyp `uebung` (Übungsblatt wie eine
   Arbeit): `punkte` an `aufgabe`/`teilaufgabe`, rechtsbündig gerendert;
   Kasten `afb3_hinweis` vor der ersten AFB-III-Aufgabe; Untertitel-Default
