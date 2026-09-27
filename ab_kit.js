@@ -42,6 +42,12 @@
  * Eine Loesung mit `ab_spec` auf eine uebung-Spec uebernimmt punkte und afb
  * der zitierten Aufgaben und haengt ein Bewertungsraster (`punkteraster`) an.
  *
+ * Seitenangabe (Kit 1.10): Specs mit mehr als einer Seite tragen im Fuss
+ * „Seite 1 von 2 · bitte wenden →" — die Zahlen als Feld (PAGE/NUMPAGES),
+ * der Wende-Hinweis auf jeder Seite ausser der letzten. `seitenzahl: false`
+ * schaltet ab, `seitenzahl: true` auch bei einer Seite ein, ein Objekt stellt
+ * Wortlaut, Groesse, Farbe und Ausrichtung ein. Siehe seitenzahlKonfig().
+ *
  * Fallen, die hier gekapselt sind (README.md fuehrt die Liste):
  *   - kein spacing.line im Default-Style (schneidet Bilder ab)
  *   - leerer Absatz nach jeder Tabelle (LibreOffice verschmilzt sonst
@@ -54,6 +60,10 @@
  *   - nutzbare Breite = 11906 - rand.links - rand.rechts (A4 in twips)
  *   - Notanker im Seitenfuss ueber Section-Footer, damit er nie auf eine
  *     Folgeseite rutscht; der untere Rand wird dafuer automatisch erhoeht
+ *   - je Section nur ein Footer: Notanker und Seitenzahl teilen ihn sich,
+ *     der untere Rand reserviert beide Hoehen
+ *   - LibreOffice wertet ein verschachteltes IF-Feld (PAGE < NUMPAGES) nicht
+ *     aus, der Wende-Hinweis haengt deshalb an der Spec-Seite
  */
 
 "use strict";
@@ -77,7 +87,7 @@ const YAML = require("yaml");
 const {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, Footer,
   WidthType, BorderStyle, AlignmentType, ImageRun, HeightRule, VerticalAlign,
-  TabStopType, LeaderType, PageBreak, LineRuleType,
+  TabStopType, LeaderType, PageBreak, PageNumber, LineRuleType,
 } = require("docx");
 
 const KIT_DIR = __dirname;
@@ -234,6 +244,18 @@ function run(text, o = {}) {
     font: o.font ?? ST.font,
     characterSpacing: o.sperrung,
     break: o.umbruch,
+  });
+}
+
+/** Run mit einem Feld (PAGE, NUMPAGES) statt Text — gleiche Stiloptionen. */
+function feldRun(feld, o = {}) {
+  return new TextRun({
+    children: [feld],
+    bold: o.fett, italics: o.kursiv,
+    size: o.groesse ?? ST.groesse,
+    color: farbe(o.farbe ?? ST.farbe_text),
+    font: o.font ?? ST.font,
+    characterSpacing: o.sperrung,
   });
 }
 
@@ -856,6 +878,58 @@ function notankerKinder(e) {
 }
 ELEMENTE.notanker = (e) => notankerKinder(e).kinder;
 
+/**
+ * seitenzahl (Kit 1.10): Fusszeile „Seite 1 von 2 · bitte wenden →".
+ * Die Zahlen sind Felder (PAGE / NUMPAGES) und zaehlen deshalb auch dann
+ * richtig, wenn eine Spec-Seite auf zwei Druckseiten laeuft. Der Wende-
+ * Hinweis haengt dagegen an der Spec-Seite: er steht auf jeder ausser der
+ * letzten (siehe Bekannte Einschraenkungen in der README).
+ *
+ *   spec.seitenzahl: false  -> aus
+ *                    true   -> an, auch bei einer einzigen Seite
+ *                    Objekt -> an, mit text (Vorlage mit {nr}/{gesamt}),
+ *                              wenden, wenden_text, trenner, groesse,
+ *                              farbe, kursiv, ausrichtung
+ *                    fehlt  -> an, sobald die Spec mehr als eine Seite hat
+ */
+const SEITENZAHL_HOEHE = 240;                  // twips, eine Zeile im Fuss
+
+function seitenzahlKonfig(spec) {
+  const roh = spec.seitenzahl;
+  if (roh === false) return null;
+  if (roh == null && (spec.seiten || []).length < 2) return null;
+  const o = (roh === true || roh == null) ? {} : roh;
+  return {
+    text: o.text ?? "Seite {nr} von {gesamt}",
+    wenden: o.wenden !== false,
+    wenden_text: o.wenden_text ?? "bitte wenden →",
+    trenner: o.trenner ?? " · ",
+    groesse: o.groesse ?? 16,
+    farbe: o.farbe ?? "grau",
+    kursiv: o.kursiv ?? false,
+    ausrichtung: o.ausrichtung ?? "rechts",
+  };
+}
+
+/** Ein Absatz fuer den Section-Footer. mitWenden = nicht die letzte Seite. */
+function seitenzahlKinder(cfg, mitWenden) {
+  const o = { groesse: cfg.groesse, farbe: cfg.farbe, kursiv: cfg.kursiv };
+  const kinder = [];
+  // Vorlage zerlegen: {nr} -> PAGE, {gesamt} -> NUMPAGES, Rest bleibt Text.
+  String(cfg.text).split(/(\{nr\}|\{gesamt\})/).forEach((teil) => {
+    if (teil === "") return;
+    if (teil === "{nr}") kinder.push(feldRun(PageNumber.CURRENT, o));
+    else if (teil === "{gesamt}") kinder.push(feldRun(PageNumber.TOTAL_PAGES, o));
+    else kinder.push(run(teil, o));
+  });
+  if (mitWenden && cfg.wenden) kinder.push(run(cfg.trenner + cfg.wenden_text, o));
+  return [new Paragraph({
+    alignment: AUSRICHTUNG[cfg.ausrichtung] ?? AlignmentType.RIGHT,
+    spacing: { before: 0, after: 0 },
+    children: kinder,
+  })];
+}
+
 // --- Bilder --------------------------------------------------------------------
 
 ELEMENTE.bild = (e) => {
@@ -910,6 +984,7 @@ function rendern(e) {
 function seiteBauen(seite, spec) {
   const elemente = [...(seite.elemente || [])];
   const istUebung = (spec.dokumenttyp ?? "ab") === "uebung";
+  const istLetzte = seite === spec.seiten[spec.seiten.length - 1];
   // Uebungsblatt (Kit 1.8): Untertitel-Default, wenn die Seite keinen setzt.
   const untertitel = seite.untertitel ?? (istUebung ? "\u00dcbungsblatt" : undefined);
   // Kopfzeile / Titel aus Seiten- oder Spec-Ebene voranstellen
@@ -942,7 +1017,7 @@ function seiteBauen(seite, spec) {
   // Loesung zu einem Uebungsblatt: Bewertungsraster am Ende der letzten Seite,
   // sofern die Spec es nicht selbst als Element `punkteraster` platziert.
   if ((spec.dokumenttyp ?? "ab") === "loesung" && AB_QUELLE && (AB_QUELLE.dokumenttyp ?? "ab") === "uebung"
-      && seite === spec.seiten[spec.seiten.length - 1]
+      && istLetzte
       && !spec.seiten.some((sx) => elementeFlach(sx.elemente).some((e) => e.typ === "punkteraster"))) {
     fluss = [...fluss, { typ: "punkteraster" }];
   }
@@ -951,16 +1026,25 @@ function seiteBauen(seite, spec) {
   const rand = { ...ST.rand, ...(seite.rand || {}) };
   const props = { page: { margin: { top: rand.oben, bottom: rand.unten, left: rand.links, right: rand.rechts } } };
   const footers = {};
-  if (fussAnker.length) {
-    if (fussAnker.length > 1) fehler("Mehr als ein notanker mit position fuss auf einer Seite.");
-    const na = notankerKinder(fussAnker[0]);
-    const fussHoehe = Math.round(na.hoehePx * 15) + 200;          // px -> twips
+  // OOXML kennt je Section nur einen Footer: Notanker und Seitenzahl
+  // (Kit 1.10) teilen ihn sich, der untere Rand reserviert beide Hoehen.
+  if (fussAnker.length > 1) fehler("Mehr als ein notanker mit position fuss auf einer Seite.");
+  const na = fussAnker.length ? notankerKinder(fussAnker[0]) : null;
+  const sz = seitenzahlKonfig(spec);
+  if (na || sz) {
+    const naHoehe = na ? Math.round(na.hoehePx * 15) + 200 : 0;   // px -> twips
     props.page.margin.footer = 280;
-    props.page.margin.bottom = Math.max(rand.unten, 280 + fussHoehe);
-    footers.default = new Footer({ children: na.kinder });
-    if ((fussAnker[0].ab_seite ?? 1) === 2) {
+    props.page.margin.bottom = Math.max(rand.unten,
+      280 + naHoehe + (sz ? SEITENZAHL_HOEHE : 0));
+    const fuss = (mitAnker) => {
+      const k = [...(mitAnker && na ? na.kinder : []),
+        ...(sz ? seitenzahlKinder(sz, !istLetzte) : [])];
+      return new Footer({ children: k.length ? k : [leer()] });
+    };
+    footers.default = fuss(true);
+    if (na && (fussAnker[0].ab_seite ?? 1) === 2) {
       props.titlePage = true;
-      footers.first = new Footer({ children: [leer()] });
+      footers.first = fuss(false);
     }
   }
   return { properties: props, children, footers: Object.keys(footers).length ? footers : undefined };
@@ -982,6 +1066,9 @@ function specPruefen(spec) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(spec.stand))) warnung(`stand '${spec.stand}' ist nicht ISO (JJJJ-MM-TT).`);
   const dt = spec.dokumenttyp ?? "ab";
   if (!["ab", "loesung", "uebung"].includes(dt)) warnung(`dokumenttyp '${dt}' unbekannt (ab | loesung | uebung) — wird wie ab behandelt.`);
+  const sz = spec.seitenzahl;
+  if (sz != null && typeof sz !== "boolean" && (typeof sz !== "object" || Array.isArray(sz)))
+    fehler("seitenzahl: erwartet true, false oder ein Objekt.");
 }
 
 /* ====================================== Uebungsblatt-Check (Kit 1.8) ===== */
@@ -1385,6 +1472,20 @@ function soffice() {
   return null;
 }
 
+/**
+ * Druckseiten eines von LibreOffice erzeugten PDFs, sonst null. Dient nur
+ * der Warnung unten — bei unbekannter Struktur bleibt die Pruefung stumm.
+ */
+function pdfSeiten(pfad) {
+  try {
+    const roh = fs.readFileSync(pfad, "latin1");
+    const m = roh.match(/\/Type\s*\/Pages[^>]*?\/Count\s+(\d+)/);
+    if (m) return Number(m[1]);
+    const t = roh.match(/\/Type\s*\/Page(?!s)/g);
+    return t ? t.length : null;
+  } catch { return null; }
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   if (!argv.length || argv[0].startsWith("--")) {
@@ -1450,6 +1551,13 @@ async function main() {
         "--headless", "--norestore", "--convert-to", "pdf", "--outdir", outDir, docxPfad,
       ], { stdio: "ignore", timeout: 300000, windowsHide: true });
       console.log(`${stamm}.pdf geschrieben (${Math.round((Date.now() - t0) / 1000)} s)`);
+      // Der Wende-Hinweis haengt an der Spec-Seite, nicht an der Druckseite:
+      // laeuft eine Spec-Seite ueber, fehlt er auf deren ersten Druckseiten.
+      const gedruckt = pdfSeiten(path.join(outDir, stamm + ".pdf"));
+      if (gedruckt != null && seitenzahlKonfig(spec) && gedruckt !== spec.seiten.length)
+        warnung(`Spec hat ${spec.seiten.length} Seite(n), das PDF ${gedruckt} Druckseite(n). `
+          + `„Seite x von y" zählt richtig, der Wende-Hinweis steht aber nur auf der letzten `
+          + `Druckseite je Spec-Seite — Spec-Seiten aufteilen oder Inhalt kürzen.`);
     }
   }
   warnungen.forEach((w) => console.log("  Warnung: " + w));

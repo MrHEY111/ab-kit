@@ -142,6 +142,9 @@ stil:                       # optional — Profil + Überschreibungen
   rand: {oben: 850, unten: 850, links: 850, rechts: 850}
 kopf:                       # optional — Kopfzeile auf jeder Seite
   links: "Chemie · Jahrgang 9 · Wasser und Wasserstoff"
+seitenzahl: false           # optional (Kit 1.10) — Fußzeile „Seite 1 von 2 ·
+                            # bitte wenden →"; ohne Angabe an, sobald die Spec
+                            # mehr als eine Seite hat (siehe Seitenangabe)
 bauplan:                    # optional — nur für den ausdrücklichen Opt-out
   scaffold: false           # Merksatz-Scaffold weglassen (Default: Pflicht)
 seiten:                     # Pflicht — jede Seite = eigene docx-Section = eine Stunde
@@ -452,6 +455,39 @@ Schritt 3). Wer es woanders will, setzt `{typ: punkteraster}` selbst.
 
 Testfall: `_build\specs\uebung_test.spec.yaml` (mit `Loesung_Uebungstest.spec.yaml`).
 
+## Seitenangabe (Kit 1.10)
+
+Hat eine Spec mehr als eine Seite, steht im Seitenfuß automatisch
+„Seite 1 von 2 · bitte wenden →" — damit die SuS sehen, dass noch eine
+Seite folgt. Die Zahlen sind Word-Felder (`PAGE` / `NUMPAGES`); sie zählen
+also auch dann richtig, wenn eine Spec-Seite auf zwei Druckseiten läuft.
+Der Zusatz „bitte wenden →" steht auf jeder Seite außer der letzten.
+
+```yaml
+seitenzahl: false           # aus
+seitenzahl: true            # an, auch bei einer einzigen Seite
+seitenzahl:                 # an, mit eigenen Werten
+  text: "Seite {nr} von {gesamt}"   # {nr} -> PAGE, {gesamt} -> NUMPAGES
+  wenden: true              # false = ohne den Zusatz
+  wenden_text: "bitte wenden →"
+  trenner: " · "            # zwischen Zählung und Zusatz
+  groesse: 16               # halbe Punkt (16 = 8 pt)
+  farbe: grau
+  kursiv: false
+  ausrichtung: rechts       # links | mitte | rechts | block
+```
+
+OOXML kennt je Section nur einen Footer. Steht auf der Seite ein `notanker`
+mit `position: fuss`, teilen sich beide den Fuß: erst der gedrehte Scaffold,
+darunter die Seitenangabe. Der untere Seitenrand wächst um beide Höhen
+(Seitenangabe: 240 twips).
+
+Läuft eine Spec-Seite auf mehrere Druckseiten, warnt der Bau mit `--pdf`:
+die Zählung bleibt richtig, der Wende-Hinweis steht dann aber nur auf der
+letzten Druckseite je Spec-Seite. Ein verschachteltes `IF`-Feld
+(`PAGE < NUMPAGES`) wäre die saubere Lösung, LibreOffice wertet es aber
+nicht aus und zeigt immer den Wahr-Zweig (geprüft 22.09.2026).
+
 ## Bauplan-Check (Kit 1.2)
 
 Jedes Arbeitsblatt (`dokumenttyp: ab`) wird beim Bau und bei `--check` gegen
@@ -543,6 +579,11 @@ Bedarf neu anzulegen (`_build\specs` ist gitignored).
     `--norestore` — kein Lock-Konflikt mit einem offenen LibreOffice, kein
     Profil auf Google Drive. Erster Lauf auf einem neuen Rechner legt das
     Profil an und dauert einmalig länger.
+20. **Je Section nur ein Footer.** Notanker und Seitenangabe (Kit 1.10)
+    teilen ihn sich; der untere Rand reserviert beide Höhen. Ein
+    verschachteltes `IF`-Feld (`PAGE < NUMPAGES`) für den Wende-Hinweis
+    funktioniert nicht: LibreOffice zeigt immer den Wahr-Zweig, auch auf
+    der letzten Seite (geprüft 22.09.2026, mit und ohne Feld-Cache).
 
 ## Bekannte Einschränkungen
 
@@ -551,11 +592,38 @@ Bedarf neu anzulegen (`_build\specs` ist gitignored).
   `kit_version` in jeder Spec; bei Major-Abweichung bricht der Lauf ab.
 - Seitenumbrüche folgen dem Inhalt. Wer ein Blatt auf genau zwei Seiten
   halten will, prüft das PDF und justiert `hoehe`/`zeilen` in der Spec.
+- Der Wende-Hinweis der Seitenangabe hängt an der Spec-Seite, nicht an der
+  Druckseite. Läuft eine Spec-Seite über, fehlt er auf deren ersten
+  Druckseiten; `--pdf` warnt, sobald Spec- und Druckseitenzahl auseinander
+  gehen. Die Zählung „Seite x von y" bleibt in jedem Fall richtig.
 - Die docx wird für LibreOffice-Render gebaut und geprüft. Word rendert
   Tabellenhöhen und Tab-Leader minimal anders — SuS-seitig ausschließlich PDF.
 
 ## Änderungsprotokoll
 
+- **1.10 (22.09.2026)** — Seitenangabe im Seitenfuß: Specs mit mehr als
+  einer Seite tragen ohne weitere Angabe „Seite 1 von 2 · bitte wenden →",
+  die Zahlen als Word-Felder `PAGE`/`NUMPAGES`, der Wende-Zusatz auf jeder
+  Seite außer der letzten. Anlass: SuS übersahen die Rückseite von
+  `AB_Wasserbestandteile_GR` (CH-09.WAS-B3). Neuer Spec-Schlüssel
+  `seitenzahl` (`false` = aus, `true` = auch bei einer Seite, Objekt für
+  `text`/`wenden`/`wenden_text`/`trenner`/`groesse`/`farbe`/`kursiv`/
+  `ausrichtung`); anderer Typ bricht ab. Notanker und Seitenangabe teilen
+  sich den Section-Footer (OOXML kennt je Section nur einen), der untere
+  Rand reserviert beide Höhen — bei aktiver Seitenangabe 240 twips mehr.
+  `--pdf` warnt neu, wenn Spec- und Druckseitenzahl auseinander gehen: der
+  Wende-Hinweis hängt an der Spec-Seite und fehlt dann auf überlaufenden
+  Seiten (`AB_Wasserbestandteile_GR`: 2 Spec-Seiten, 4 Druckseiten — der
+  Hinweis fehlt auf Druckseite 3). Ein verschachteltes `IF`-Feld
+  (`PAGE < NUMPAGES`) wurde verworfen: LibreOffice wertet es nicht aus und
+  zeigt den Wahr-Zweig auf allen Seiten, auch mit geleertem Feld-Cache.
+  Regression: Neubau aller 39 Archiv-Specs, 38 davon mit bitgleichem
+  `word/document.xml`; geändert ist nur die einzige mehrseitige Spec
+  `AB_Wasserbestandteile_GR` — dort kommt der Fuß hinzu, die Seitenzahl
+  bleibt bei 4. Testfälle `_build\specs\sz_*.spec.yaml` (zwei Seiten, aus,
+  einseitig erzwungen, Stil-Objekt, ohne Wende-Zusatz, mit Notanker,
+  Profil `kanon`, ungültiger Typ). Specs mit `kit_version: "1.9"` und älter
+  (1.x) bauen unverändert (Minor).
 - **1.9 (09.09.2026)** — Neuer Asset-Typ `kreislauf` in `ab_assets.py`,
   zwei Commits. **Teil 1:** Stoffkreislauf aus zwei Kästen (`oben`/`unten`)
   und zwei Pfeilen (rechts abwärts, links aufwärts) mit je einem
