@@ -1,7 +1,7 @@
 # AB-Kit — Arbeitsblätter und Lösungen aus einer Spec
 
-Kit-Version: siehe `KIT_VERSION` · Stand 08.09.2026 · Repo: `https://github.com/mrhey111/ab-kit` (öffentlich, kanonisch) · Arbeitskopie Windows: `C:\dev\ab_kit\` (Klon)
-<!-- schema-bindung: v1.16 (2026-09-08) -->
+Kit-Version: siehe `KIT_VERSION` · Stand 27.09.2026 · Repo: `https://github.com/mrhey111/ab-kit` (öffentlich, kanonisch) · Arbeitskopie Windows: `C:\dev\ab_kit\` (Klon)
+<!-- schema-bindung: v1.18 (2026-09-27) -->
 
 Ein Renderer, alle Unterschiede zwischen Blättern stehen in der Spec. Pro
 Arbeitsblatt oder Erwartungshorizont gibt es genau eine Textdatei
@@ -14,7 +14,8 @@ Das Kit ersetzt `Python_Skripte\CH-09.WAS\build_*.js`, `scaffold_gen.py`,
 | Datei | Zweck |
 |---|---|
 | `KIT_VERSION` | Versionsmarke (eine Zeile). Jede Spec trägt `kit_version`; Major-Abweichung = Abbruch. |
-| `ab_assets.py` | Erzeugt aus dem Block `assets:` der Spec alle PNGs (RGB) plus Sidecar `<name>.json` mit Anzeigegröße. |
+| `ab_assets.py` | Erzeugt aus dem Block `assets:` der Spec alle PNGs (RGB) plus Sidecar `<name>.json` mit Anzeigegröße, dazu die PNGs der Elemente `geraet`/`geraete`/`skizze` aus der Gerätebibliothek (Kit 1.11). |
+| `config\bibliothek.local.json` | Nur lokal, nicht im Repo: `{"wurzel": "<Ordner der Gerätebibliothek>"}` (siehe Gerätebibliothek). |
 | `ab_kit.js` | Rendert die Spec zu docx, optional zu PDF (`--pdf`, braucht `soffice`). |
 | `package.json` | Abhängigkeiten `docx`, `yaml` — siehe Installation. |
 | `bau.ps1` | Windows: Check, Assets, Bau mit PDF für eine oder mehrere Specs und Ablage von docx + pdf **neben der Spec** (Blockordner). `-NurCheck` für den reinen Check. |
@@ -35,10 +36,12 @@ powershell -ExecutionPolicy Bypass -File "C:\dev\ab_kit\setup_windows.ps1"
 Von Hand entspricht das:
 
 ```
-pip install pillow pyyaml
+pip install pillow pyyaml pypdf
 npm install -g docx yaml
 ```
 
+`pypdf` sowie `pdftocairo`/`pdfinfo` (Poppler, unter Windows über TeX Live)
+braucht nur die Gerätebibliothek (Kit 1.11); Specs ohne Geräte bauen ohne sie.
 Statt global geht auf `C:` auch `npm install` im Kit-Ordner; `ab_kit.js` sucht
 die Module zuerst lokal, dann im globalen npm-Root (`%APPDATA%\npm\node_modules`).
 Auf Google Drive `npm install` nie ausführen — dort entstehen 0-Byte-Dateien
@@ -78,6 +81,9 @@ Der Container hat keinen Zugriff auf `G:`. Deshalb:
   In der Spec, die ins Archiv geht, steht wieder der `G:`-Pfad.
 - `kit_version` der Spec muss zur `KIT_VERSION` des Klons passen (Major),
   sonst bricht der Lauf ab — bei einem alten Klon `git pull`.
+- Specs mit `geraet`/`geraete`/`skizze` brauchen die Gerätebibliothek: den
+  Bibliotheksordner (oder nur die benutzten Unterordner mit `katalog.csv`
+  und `svg\`) hochladen, `AB_KIT_BIBLIOTHEK` darauf setzen, `pip install pypdf`.
 
 Ablauf im Container:
 
@@ -204,6 +210,9 @@ Alle Profilwerte lassen sich unter `stil:` einzeln überschreiben
 | `bild` / `balkenraster` | `asset`, `breite`, `ausrichtung`, `vor`, `nach` | |
 | `nebeneinander` | `links`/`rechts` (Elementlisten) oder `links_bild`/`rechts_bild`, `breite_links`, `breite_rechts`, `breite_bild`, `valign`, `luecke`, `rahmen` | eine Tabelle; `luecke` = Lückenspalte, `rahmen: grau` = beide Zellen gerahmt (Planpaar) |
 | `sprinter` | `text` (String/Liste) oder `aufgaben` (a), b), …), `hoehe`, `label`, `emoji`, `sperrung`, `linien`, `abstand` | `linien` = Schreiblinien je Teilaufgabe im Kasten |
+| `geraet` | `id`, `breite_mm` \| `hoehe_mm` (Default Höhe 30), `nummer`, `beschriftung`, `ausrichtung`, `beschnitt`, `spiegeln`, `graustufen`, `vor`, `nach` | Kit 1.11: ein Laborgerät aus der Gerätebibliothek, darunter „Nummer Beschriftung“ |
+| `geraete` | `geraete: [{id, nummer, name, breite_mm, hoehe_mm, beschnitt, spiegeln, graustufen}]`, `spalten` (4), `hoehe_mm` (30), `unterzeile: linie\|name\|nummer\|keine`, `rahmen`, `staerke`, `rahmen_farbe` | Kit 1.11: Raster für Zuordnungsaufgaben, alle Geräte gleich hoch und unten bündig; `linie` = Nummer + Schreiblinie (AB), `name` = Nummer + Name (Lösung) |
+| `skizze` | `teile: [{name, id, x, y, dx, dy, auf, breite_mm, hoehe_mm, massstab, beschnitt, spiegeln, graustufen}]`, `breite_mm` \| `massstab`, `beschriftung: [{teil, text, nummer, seite, punkt}]`, `pt`, `ausrichtung` | Kit 1.11: Versuchsaufbau aus mehreren Geräten, siehe Gerätebibliothek |
 | `leer` | `hoehe` | |
 | `seitenumbruch` | — | |
 
@@ -488,6 +497,98 @@ letzten Druckseite je Spec-Seite. Ein verschachteltes `IF`-Feld
 (`PAGE < NUMPAGES`) wäre die saubere Lösung, LibreOffice wertet es aber
 nicht aus und zeigt immer den Wahr-Zweig (geprüft 22.09.2026).
 
+## Gerätebibliothek (Kit 1.11)
+
+Laborgeräte kommen als Vektorgrafik aus einer **Gerätebibliothek außerhalb
+des Repos** — einzeln (`geraet`), als Zuordnungsraster (`geraete`) oder als
+zusammengesetzte Versuchsskizze (`skizze`). Die Elemente stehen in
+`seiten[].elemente`, ein Eintrag unter `assets:` ist nicht nötig:
+`ab_assets.py` baut die PNGs selbst.
+
+**Bibliothek.** Ein Ordner mit Unterordnern, je Unterordner:
+
+- `katalog.csv` — Semikolon, UTF-8, keine Anführungszeichen, Kopfzeile
+  `id;folie;kategorie;name;jg8` plus optional `lizenz;quelle`. Die ID ist
+  über alle Kataloge eindeutig (doppelt = Abbruch).
+- `svg\<id>.svg` — die Grafik. Gerendert wird **immer aus dem SVG**.
+
+Der Wurzelpfad steht nie in einer Spec: Umgebungsvariable
+`AB_KIT_BIBLIOTHEK`, sonst `config\bibliothek.local.json` mit
+`{"wurzel": "…"}` (per `.gitignore` ausgeschlossen, ebenso `*.csv` und
+`*.zip`). Kein Bild, kein Katalog und kein Pfad der Bibliothek gehört ins Repo.
+
+**Lizenz.** `--check` und der Bau lesen die Spalte `lizenz`: fehlt sie
+oder ist sie leer, gilt die Lizenz als ungeklärt — Hinweis „nur für eigene
+Lerngruppen, nicht veröffentlichen“. Enthält sie `BY` (CC BY, CC BY-SA),
+setzt das Kit unter das Bild bzw. Raster automatisch eine graue
+Quellenzeile „Grafik: Name, Lizenz, Quelle“.
+
+**Render.** LibreOffice wandelt jedes benutzte SVG einmal in ein PDF
+(Cache `_build\_bibliothek\`, erneuert, wenn das SVG neuer ist),
+`pdftocairo` rastert es auf die Zielgröße (4-fach wie alle Assets). Das
+weiße Seitenrechteck, das LibreOffice vor jede Zeichnung legt, wird im
+PDF entfernt (Falle 21) — dadurch bleiben die Geräte freigestellt und
+lassen sich übereinander setzen. Transparente Ränder werden abgeschnitten:
+**alle Maße beziehen sich auf das sichtbare Gerät.**
+
+**Zuschnitt.** Viele Grafiken sind Sammelbilder (drei Bechergläser in
+einer Datei). `beschnitt: {links, oben, rechts, unten}` (Anteile 0..1, wie
+bei `bilddatei`) schneidet vorher zu, danach wird auf das Sichtbare
+getrimmt — `{rechts: 0.5}` genügt also für das linke von zwei Geräten.
+
+```yaml
+- {typ: geraet, id: ZUM_Teclubrenner-schraeg, hoehe_mm: 35, nummer: 1, beschriftung: Gasbrenner}
+
+- typ: geraete                    # AB: Nummer + Schreiblinie
+  spalten: 4
+  hoehe_mm: 30
+  unterzeile: linie               # Loesung: name
+  geraete:
+    - {id: ZUM_Becherglaeser, nummer: 1, name: Becherglas, beschnitt: {rechts: 0.77}}
+    - {id: ZUM_Thermometer2, nummer: 2, name: Thermometer}
+
+- typ: skizze                     # Erhitzen im Becherglas auf dem Dreifuss
+  breite_mm: 45                   # Breite der Zeichnung ohne Beschriftung
+  teile:                          # Reihenfolge = Zeichenreihenfolge
+    - {name: dreifuss, id: <Dreifuss>}
+    - {name: glas, id: <Becherglas>, auf: dreifuss}
+    - {name: brenner, id: <Brenner>, hoehe_mm: 30}
+  beschriftung:
+    - {teil: glas, nummer: 1, text: Becherglas, seite: links, punkt: [0.3, 0.3]}
+    - {teil: brenner, nummer: 3, seite: rechts, punkt: [0.6, 0.85]}
+```
+
+**Skizze — Lageregeln.** Einheit mm, y nach oben. Jedes Teil steht mit
+seiner Unterkante auf `y` (Default 0 = gemeinsame Grundlinie) und sitzt
+waagerecht mittig auf `x` (Default 0). `auf: <name>` stellt es auf die
+Oberkante eines **früheren** Teils, mittig darüber (`x` setzt die Mitte
+dann absolut). `dx`/`dy` verschieben. Größe je Teil: `breite_mm`,
+`hoehe_mm` oder `massstab` × Originalgröße des SVG (Default 1). Grafiken
+verschiedener Quellen haben verschiedene Maßstäbe — beim Mischen je Teil
+eine Größe setzen. Die fertige Zeichnung wird auf `breite_mm` skaliert
+(sonst `massstab`, Default 1). Manche Grafiken sind innen deckend weiß
+gefüllt (etwa ein Dreifuß zwischen den Beinen): was davor stehen soll,
+kommt in `teile` **danach**.
+
+**Beschriftung.** Etiketten links oder rechts neben der Zeichnung, je
+Seite von oben nach unten ohne Überlappung, mit Hinweislinie zu `punkt`
+(Anteile im Kasten des Teils, Default Mitte). `nummer` fett, `text`
+normal, beides zusammen „1  Becherglas“; `pt` (Default 10) setzt die
+Schrift. AB mit `nummer`, Lösung mit `nummer` + `text`.
+
+**Prüfung.** `--check` bricht ab bei unbekannter ID (alle auf einmal
+genannt), fehlender `id`, fehlender Bibliothek, `auf:` auf ein unbekanntes
+oder späteres Teil, doppeltem Teilnamen, Beschriftung an unbekanntem Teil
+und unbekannter `unterzeile`. Beim Bau vergleicht `ab_kit.js` die IDs im
+Sidecar mit der Spec: wurde die Spec nach `ab_assets.py` geändert, bricht
+der Bau mit „python ab_assets.py neu ausführen“ ab, statt ein falsches
+Bild einzusetzen. PNG-Namen: `<typ>_<n>` in Renderreihenfolge (Seiten,
+Elemente, `nebeneinander` links vor rechts), Rasterzellen `geraete_<n>_<k>`.
+
+Testfälle: `_build\specs\geraete_test.spec.yaml`,
+`AB_Laborgeraete_GR.spec.yaml` + `Loesung_Laborgeraete.spec.yaml`,
+`geraete_fehler_*.spec.yaml` (nicht im Repo).
+
 ## Bauplan-Check (Kit 1.2)
 
 Jedes Arbeitsblatt (`dokumenttyp: ab`) wird beim Bau und bei `--check` gegen
@@ -584,6 +685,16 @@ Bedarf neu anzulegen (`_build\specs` ist gitignored).
     verschachteltes `IF`-Feld (`PAGE < NUMPAGES`) für den Wende-Hinweis
     funktioniert nicht: LibreOffice zeigt immer den Wahr-Zweig, auch auf
     der letzten Seite (geprüft 22.09.2026, mit und ohne Feld-Cache).
+21. **LibreOffice hinterlegt SVG weiß.** Beim Export SVG → PDF schreibt
+    LibreOffice ein weißes Seitenrechteck (`/Artifact`, `1 1 1 rg … f*`)
+    vor die Zeichnung; `pdftocairo -transp` rendert es mit, jedes Gerät
+    wäre deckend weiß hinterlegt. `ab_assets.py` macht den Füllbefehl zu
+    `n` (Pfad verwerfen); Clip und `q`/`Q` bleiben, echte Transparenz im
+    SVG (Flammen) ebenfalls. Geprüft an 111 SVGs (27.09.2026): das Muster
+    steht immer am Anfang des Inhalts. Fehlt es, warnt der Lauf.
+22. **`convert("RGB")` macht Transparenz schwarz.** Freigestellte Geräte
+    werden vor dem Speichern auf Weiß gelegt (`auf_weiss`), nicht nur
+    konvertiert.
 
 ## Bekannte Einschränkungen
 
@@ -601,6 +712,22 @@ Bedarf neu anzulegen (`_build\specs` ist gitignored).
 
 ## Änderungsprotokoll
 
+- **1.11 (27.09.2026)** — Gerätebibliothek: drei neue Elementtypen
+  `geraet` (ein Laborgerät), `geraete` (Zuordnungsraster, `unterzeile`
+  linie/name/nummer/keine) und `skizze` (Versuchsaufbau aus mehreren
+  Geräten mit Grundlinie, `auf:`, `dx`/`dy`, Hinweislinien-Beschriftung).
+  Geräte kommen per ID aus externen Katalogen (`katalog.csv` + `svg\`), der
+  Wurzelpfad aus `AB_KIT_BIBLIOTHEK` oder `config\bibliothek.local.json`,
+  nie aus der Spec. Render immer aus dem SVG (LibreOffice → PDF-Cache →
+  `pdftocairo`), LibreOffice-Hintergrund entfernt (Falle 21), Ränder auf
+  das Sichtbare getrimmt. `--check` meldet unbekannte IDs und
+  Strukturfehler; Lizenzspalte leer = Hinweis, `BY` = Quellenzeile. Sidecar
+  trägt die IDs, der Bau erkennt veraltete Assets. `.gitignore` schließt
+  `*.csv`, `*.zip` und `config/*.local.json` aus. Neue Abhängigkeiten nur
+  für Geräte: `pypdf`, `pdftocairo`/`pdfinfo`. Keine neuen Top-Level-Felder.
+  Anlass: CH-08.EXP-B9 „Laborgeräte“. Regression: Neubau aller 39
+  Archiv-Specs mit bitgleichen PNG, JSON, `word/document.xml` und
+  `--check`-Ausgaben (152 Hashes).
 - **1.10 (22.09.2026)** — Seitenangabe im Seitenfuß: Specs mit mehr als
   einer Seite tragen ohne weitere Angabe „Seite 1 von 2 · bitte wenden →",
   die Zahlen als Word-Felder `PAGE`/`NUMPAGES`, der Wende-Zusatz auf jeder

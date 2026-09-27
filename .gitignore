@@ -33,3 +33,8 @@ ab_kit_lo_profil/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Geraetebibliothek (Kit 1.11): Kataloge, Archive und der lokale Pfad bleiben draussen
+*.csv
+*.zip
+config/*.local.json

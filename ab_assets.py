@@ -21,6 +21,10 @@ Generatoren (Feld `typ` je Asset):
     schaltbild   Schaltplan aus Bauteilliste und Topologie (Reihe, Zweige)
     kreislauf    Stoffkreislauf, 2 bis 4 Stationen im Umlauf, Beschriftungsfelder je Pfeil
 
+Geraetebibliothek (Kit 1.11, ohne Eintrag unter assets:): die Elemente
+geraet, geraete und skizze in seiten[].elemente werden aus den SVGs einer
+externen Bibliothek gerendert — siehe Abschnitt "Geraetebibliothek" unten.
+
 Fallen, die hier gekapselt sind (siehe README.md):
   - Alle PNGs RGB, nie RGBA (RGBA laesst den docx-Render abstuerzen).
   - Gedrehte Texte als Bild (PIL), nie als OOXML-Rotation.
@@ -29,9 +33,13 @@ Fallen, die hier gekapselt sind (siehe README.md):
   - Renderskalierung SCALE (4x): das PNG traegt 4x so viele Pixel wie es im
     Dokument breit ist; die Anzeigegroesse steht im Sidecar-JSON.
 """
+import csv
 import json
 import math
 import os
+import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -102,13 +110,15 @@ def farbe(v, default=(60, 60, 60)):
     return tuple(int(v[i:i + 2], 16) for i in (0, 2, 4))
 
 
-def speichern(img, out, name):
+def speichern(img, out, name, extra=None):
     """RGB erzwingen, PNG + Sidecar mit Anzeigegroesse schreiben."""
     img = img.convert("RGB")
     png = out / f"{name}.png"
     img.save(png, "PNG", dpi=(96 * SCALE, 96 * SCALE))
     dims = {"breite_px": round(img.width / SCALE),
             "hoehe_px": round(img.height / SCALE)}
+    if extra:                       # Kit 1.11: IDs der Geraete fuer ab_kit.js
+        dims.update(extra)
     (out / f"{name}.json").write_text(json.dumps(dims), encoding="utf-8")
     print(f"  {name}.png  {img.width}x{img.height}px  "
           f"-> {dims['breite_px']}x{dims['hoehe_px']}px im Dokument")
@@ -1253,6 +1263,377 @@ def gen_kreislauf(a):
     return img
 
 
+# ------------------------------------------------ Geraetebibliothek ---
+#
+# Laborgeraete aus einer externen Bibliothek (Kit 1.11). Die Bibliothek ist
+# ein Ordner mit Unterordnern; jeder Unterordner traegt katalog.csv
+# (Semikolon, UTF-8, Spalten id;folie;kategorie;name;jg8[;lizenz;quelle])
+# und svg\<id>.svg. Der Wurzelpfad steht nie in der Spec: Umgebungsvariable
+# AB_KIT_BIBLIOTHEK, sonst config\bibliothek.local.json {"wurzel": "…"}
+# (nicht im Repo — die Bibliothek enthaelt Grafiken mit ungeklaerter Lizenz).
+#
+# Gerendert wird immer aus dem SVG: LibreOffice wandelt es einmal je ID in
+# ein PDF (Cache _build\_bibliothek\), pdftocairo rastert es auf die
+# Zielgroesse. Transparente Raender werden abgeschnitten — alle Groessen
+# (breite_mm, hoehe_mm) und Positionen beziehen sich auf das sichtbare Geraet.
+#
+# Die Elemente geraet, geraete und skizze stehen in seiten[].elemente, nicht
+# unter assets:. Ihre PNGs heissen <typ>_<n> (Zellen des Rasters
+# geraete_<n>_<k>), n zaehlt in Renderreihenfolge (Seiten, Elemente,
+# nebeneinander links vor rechts) — ab_kit.js zaehlt identisch und prueft
+# die IDs im Sidecar gegen die Spec.
+
+MM_PX = 96 / 25.4                 # Anzeige-px je mm
+BIB_CACHE = KIT_DIR / "_build" / "_bibliothek"
+GERAET_TYPEN = ("geraet", "geraete", "skizze")
+_KATALOG = None
+_GERAET_INFO = {}
+
+
+def bibliothek_wurzel():
+    w = os.environ.get("AB_KIT_BIBLIOTHEK")
+    if not w:
+        cfg = KIT_DIR / "config" / "bibliothek.local.json"
+        if cfg.is_file():
+            w = json.loads(cfg.read_text(encoding="utf-8")).get("wurzel")
+    if not w or not Path(w).is_dir():
+        sys.exit("Abbruch: Geraetebibliothek nicht gefunden — Umgebungsvariable "
+                 "AB_KIT_BIBLIOTHEK setzen oder config\\bibliothek.local.json "
+                 "mit {\"wurzel\": \"…\"} anlegen (README, Geraetebibliothek).")
+    return Path(w)
+
+
+def katalog():
+    """id -> Katalogzeile (dict) plus 'ordner' ueber alle Unterordner."""
+    global _KATALOG
+    if _KATALOG is None:
+        _KATALOG = {}
+        for pfad in sorted(bibliothek_wurzel().glob("*/katalog.csv")):
+            with open(pfad, encoding="utf-8", newline="") as f:
+                for zeile in csv.DictReader(f, delimiter=";"):
+                    iid = (zeile.get("id") or "").strip()
+                    if not iid:
+                        continue
+                    if iid in _KATALOG:
+                        sys.exit(f"Abbruch: Geraete-ID {iid} steht in zwei Katalogen "
+                                 f"({_KATALOG[iid]['ordner'].name}, {pfad.parent.name}).")
+                    _KATALOG[iid] = {**zeile, "ordner": pfad.parent}
+    return _KATALOG
+
+
+def _soffice():
+    for k in (r"C:\Program Files\LibreOffice\program\soffice.exe",
+              r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"):
+        if os.path.isfile(k):
+            return k
+    return shutil.which("soffice")
+
+
+def geraete_vorbereiten(ids):
+    """SVG -> PDF fuer alle IDs ohne aktuelles PDF im Cache, ein soffice-Lauf."""
+    kat = katalog()
+    unbekannt = sorted(i for i in set(ids) if i not in kat)
+    if unbekannt:
+        sys.exit(f"Abbruch: unbekannte Geraete-ID(s): {', '.join(unbekannt)}")
+    BIB_CACHE.mkdir(parents=True, exist_ok=True)
+    offen = []
+    for iid in sorted(set(ids)):
+        svg = kat[iid]["ordner"] / "svg" / f"{iid}.svg"
+        if not svg.is_file():
+            sys.exit(f"Abbruch: SVG fehlt: {svg}")
+        pdf = BIB_CACHE / f"{iid}.pdf"
+        if not pdf.is_file() or pdf.stat().st_mtime < svg.stat().st_mtime:
+            offen.append(svg)
+    if not offen:
+        return
+    so = _soffice()
+    if not so:
+        sys.exit("Abbruch: LibreOffice (soffice) nicht gefunden — noetig fuer SVG-Geraete.")
+    # Eigenes Profil wie ab_kit.js --pdf: kein Lock-Konflikt mit offenem LibreOffice.
+    profil = Path(os.environ.get("LOCALAPPDATA") or os.environ.get("HOME") or KIT_DIR) / "ab_kit_lo_profil"
+    profil.mkdir(parents=True, exist_ok=True)
+    print(f"  LibreOffice: {len(offen)} SVG -> PDF")
+    subprocess.run([so, f"-env:UserInstallation=file:///{str(profil).replace(os.sep, '/')}",
+                    "--headless", "--norestore", "--convert-to", "pdf",
+                    "--outdir", str(BIB_CACHE), *map(str, offen)],
+                   check=True, timeout=900, stdout=subprocess.DEVNULL,
+                   stderr=subprocess.DEVNULL)
+    for svg in offen:
+        pdf = BIB_CACHE / f"{svg.stem}.pdf"
+        if not pdf.is_file():
+            sys.exit(f"Abbruch: LibreOffice hat {svg.name} nicht umgewandelt.")
+        _hintergrund_entfernen(pdf)
+
+
+# LibreOffice legt beim Export vor die Zeichnung ein weisses Seitenrechteck
+# (/Artifact, "1 1 1 rg … f*"); damit waere jedes Geraet deckend weiss
+# hinterlegt und liesse sich weder freistellen noch uebereinander setzen.
+# Der Fuellbefehl wird zu "n" (Pfad verwerfen) — Clip und q/Q bleiben
+# unangetastet, echte Transparenz im SVG (Flammen) bleibt erhalten.
+_LO_HINTERGRUND = re.compile(
+    rb"(/Artifact BMC\s*q [^\n]*re\s*W\* n\s*1 1 1 rg\s*[^f]*?)f\*(\s*EMC)")
+
+
+def _hintergrund_entfernen(pdf):
+    try:
+        from pypdf import PdfReader, PdfWriter
+    except ImportError:
+        sys.exit("Abbruch: pypdf fehlt (pip install pypdf) — noetig fuer SVG-Geraete.")
+    w = PdfWriter(clone_from=PdfReader(pdf))
+    inhalt = w.pages[0].get_contents()
+    daten, n = _LO_HINTERGRUND.subn(rb"\1n\2", inhalt.get_data(), count=1)
+    if not n:
+        print(f"  Warnung: {pdf.stem} — LibreOffice-Hintergrund nicht gefunden, "
+              "Geraet bleibt weiss hinterlegt.")
+        return
+    inhalt.set_data(daten)
+    w.pages[0].replace_contents(inhalt)
+    with open(pdf, "wb") as f:
+        w.write(f)
+
+
+def _pdftocairo(pdf, out_stamm, *args):
+    subprocess.run(["pdftocairo", "-png", "-transp", "-singlefile", *args,
+                    str(pdf), str(out_stamm)], check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return Image.open(f"{out_stamm}.png").convert("RGBA")
+
+
+def _geraet_info(iid, beschnitt=None):
+    """Sichtbarer Kasten (Anteile 0..1 der Seite) und seine Groesse in mm."""
+    key = (iid, json.dumps(beschnitt or {}, sort_keys=True))
+    if key in _GERAET_INFO:
+        return _GERAET_INFO[key]
+    pdf = BIB_CACHE / f"{iid}.pdf"
+    info = subprocess.run(["pdfinfo", str(pdf)], capture_output=True, text=True,
+                          check=True).stdout
+    w_pt, h_pt = map(float, re.search(r"Page size:\s*([\d.]+) x ([\d.]+)", info).groups())
+    probe = BIB_CACHE / f"{iid}_probe"
+    if not Path(f"{probe}.png").is_file():
+        _pdftocairo(pdf, probe, "-scale-to", "1200")
+    img = Image.open(f"{probe}.png").convert("RGBA")
+    W, H = img.size
+    b = beschnitt or {}
+    x0, y0 = b.get("links", 0), b.get("oben", 0)
+    x1, y1 = 1 - b.get("rechts", 0), 1 - b.get("unten", 0)
+    ox, oy = round(x0 * W), round(y0 * H)
+    teil = img.crop((ox, oy, round(x1 * W), round(y1 * H)))
+    bbox = teil.getchannel("A").point(lambda a: 255 if a > 8 else 0).getbbox()
+    if not bbox:
+        sys.exit(f"Abbruch: Geraet {iid} ist (im Beschnitt) leer.")
+    kasten = ((ox + bbox[0]) / W, (oy + bbox[1]) / H, (ox + bbox[2]) / W, (oy + bbox[3]) / H)
+    mm = (w_pt / 72 * 25.4, h_pt / 72 * 25.4)
+    res = {"kasten": kasten,
+           "mm": ((kasten[2] - kasten[0]) * mm[0], (kasten[3] - kasten[1]) * mm[1])}
+    _GERAET_INFO[key] = res
+    return res
+
+
+def geraet_bild(t, breite_px=None, hoehe_px=None):
+    """
+    Sichtbares Geraet als RGBA in Renderpixeln (SCALE-fach).
+    t: {id, beschnitt, spiegeln, graustufen}; Zielgroesse in Anzeige-px
+    (96 dpi), eine Angabe genuegt; keine = Originalgroesse des SVG.
+    """
+    iid = t["id"]
+    inf = _geraet_info(iid, t.get("beschnitt"))
+    k = inf["kasten"]
+    nat_w, nat_h = inf["mm"][0] * MM_PX, inf["mm"][1] * MM_PX
+    f = breite_px / nat_w if breite_px else hoehe_px / nat_h if hoehe_px else 1
+    zw, zh = max(1, round(nat_w * f * SCALE)), max(1, round(nat_h * f * SCALE))
+    voll = max(1, math.ceil(zw / (k[2] - k[0])))
+    stamm = BIB_CACHE / f"{iid}_{voll}"
+    if Path(f"{stamm}.png").is_file():
+        img = Image.open(f"{stamm}.png").convert("RGBA")
+    else:
+        img = _pdftocairo(BIB_CACHE / f"{iid}.pdf", stamm, "-scale-to-x", str(voll), "-scale-to-y", "-1")
+    W, H = img.size
+    img = img.crop((round(k[0] * W), round(k[1] * H), round(k[2] * W), round(k[3] * H)))
+    img = img.resize((zw, zh), Image.LANCZOS)
+    if t.get("spiegeln"):
+        img = ImageOps.mirror(img)
+    if t.get("graustufen"):
+        a = img.getchannel("A")
+        img = img.convert("L").convert("RGBA")
+        img.putalpha(a)
+    return img
+
+
+def auf_weiss(img):
+    """RGBA auf weissen Grund legen (convert('RGB') allein macht Transparenz schwarz)."""
+    hg = Image.new("RGB", img.size, "white")
+    hg.paste(img, mask=img.getchannel("A"))
+    return hg
+
+
+def _mm_px(e, default_hoehe=None):
+    """breite_mm / hoehe_mm eines Eintrags -> (breite_px, hoehe_px) in Anzeige-px."""
+    if e.get("breite_mm") is not None:
+        return e["breite_mm"] * MM_PX, None
+    if e.get("hoehe_mm") is not None:
+        return None, e["hoehe_mm"] * MM_PX
+    return None, (default_hoehe * MM_PX if default_hoehe else None)
+
+
+def gen_geraet(e):
+    """Element geraet: ein Geraet, Default-Hoehe 30 mm."""
+    return geraet_bild(e, *_mm_px(e, 30))
+
+
+def gen_geraete_zelle(e, g):
+    """Zelle des Rasters geraete: Hoehe des Rasters, sofern das Geraet keine eigene hat."""
+    return geraet_bild(g, *_mm_px(g, e.get("hoehe_mm", 30)))
+
+
+def gen_skizze(e):
+    """
+    Element skizze: mehrere Geraete zu einem Versuchsaufbau.
+
+    teile:  [{name, id, x, y, dx, dy, auf, breite_mm, hoehe_mm, massstab,
+              beschnitt, spiegeln, graustufen}] — Reihenfolge = Zeichenreihenfolge
+            Einheit mm, y nach oben. Ein Teil steht mit der Unterkante auf
+            y (Default 0 = Grundlinie), waagerecht mittig auf x (Default 0).
+            auf: <name> stellt es auf die Oberkante eines frueheren Teils,
+            mittig darueber (x setzt die Mitte absolut). dx/dy verschieben.
+            Groesse: breite_mm | hoehe_mm | massstab x Originalgroesse.
+    breite_mm: Breite der Zeichnung (ohne Beschriftung); sonst massstab (1)
+    beschriftung: [{teil, text, nummer, seite: links|rechts, punkt: [fx, fy]}]
+            Hinweislinie vom Etikett zum Punkt im Teil (Anteile, Default Mitte).
+    pt:     Schriftgroesse der Beschriftung (Default 10)
+    """
+    lay = {}
+    for i, t in enumerate(e.get("teile") or []):
+        name = t.get("name") or f"teil{i + 1}"
+        vw, vh = _geraet_info(t["id"], t.get("beschnitt"))["mm"]
+        if t.get("breite_mm") is not None:
+            f = t["breite_mm"] / vw
+        elif t.get("hoehe_mm") is not None:
+            f = t["hoehe_mm"] / vh
+        else:
+            f = t.get("massstab", 1)
+        w, h = vw * f, vh * f
+        if t.get("auf"):
+            b = lay[t["auf"]]
+            unten = b["oben"] + t.get("dy", 0)
+            mitte = (t["x"] if t.get("x") is not None else b["mitte"]) + t.get("dx", 0)
+        else:
+            unten = t.get("y", 0) + t.get("dy", 0)
+            mitte = t.get("x", 0) + t.get("dx", 0)
+        lay[name] = {"t": t, "w": w, "h": h, "unten": unten, "oben": unten + h,
+                     "mitte": mitte, "links": mitte - w / 2, "rechts": mitte + w / 2}
+    L = min(v["links"] for v in lay.values())
+    R = max(v["rechts"] for v in lay.values())
+    U = min(v["unten"] for v in lay.values())
+    O = max(v["oben"] for v in lay.values())
+    fit = e["breite_mm"] / (R - L) if e.get("breite_mm") else e.get("massstab", 1)
+    k = fit * MM_PX * SCALE                    # Skizzen-mm -> Renderpixel
+    zeichnung = Image.new("RGBA", (max(1, round((R - L) * k)), max(1, round((O - U) * k))),
+                          (255, 255, 255, 0))
+    for v in lay.values():
+        img = geraet_bild(v["t"], breite_px=v["w"] * fit * MM_PX)
+        zeichnung.alpha_composite(img, (round((v["links"] - L) * k), round((O - v["oben"]) * k)))
+
+    etiketten = e.get("beschriftung") or []
+    if not etiketten:
+        return zeichnung
+    pt = e.get("pt", 10)
+    fr, fb = font("regular", pt), font("bold", pt)
+    zeile = round(pt * SCALE * 96 / 72 * 1.35)
+    luecke, gap = s(18), s(4)          # Linie vor dem Etikett, Abstand Linie/Text
+    items = []
+    for b in etiketten:
+        v = lay[b["teil"]]
+        fx, fy = b.get("punkt") or (0.5, 0.5)
+        stuecke = []
+        if b.get("nummer") is not None:
+            stuecke.append((str(b["nummer"]), fb))
+        if b.get("text"):
+            stuecke.append((("  " if stuecke else "") + str(b["text"]), fr))
+        items.append({"seite": b.get("seite", "rechts"),
+                      "ax": (v["links"] + fx * v["w"] - L) * k,
+                      "ay": (O - v["oben"] + fy * v["h"]) * k,
+                      "stuecke": stuecke,
+                      "breite": sum(round(fnt.getlength(tx)) for tx, fnt in stuecke)})
+    breite_l = max([i["breite"] for i in items if i["seite"] == "links"], default=0)
+    breite_r = max([i["breite"] for i in items if i["seite"] == "rechts"], default=0)
+    rand_l = breite_l + gap + luecke + s(2) if breite_l else 0     # s(2): Kantenglaettung
+    rand_r = breite_r + gap + luecke + s(2) if breite_r else 0     # nicht am Bildrand kappen
+    # Etiketten je Seite von oben nach unten, Mindestabstand eine Zeile
+    for seite in ("links", "rechts"):
+        y_min = zeile / 2
+        for i in sorted((i for i in items if i["seite"] == seite), key=lambda i: i["ay"]):
+            i["y"] = max(i["ay"], y_min)
+            y_min = i["y"] + zeile
+    hoehe = max([zeichnung.height] + [round(i["y"] + zeile / 2) for i in items])
+    bild = Image.new("RGBA", (rand_l + zeichnung.width + rand_r, hoehe), (255, 255, 255, 0))
+    bild.alpha_composite(zeichnung, (rand_l, 0))
+    d = ImageDraw.Draw(bild)
+    col = (40, 40, 40)
+    for i in items:
+        ax, ay, y = i["ax"] + rand_l, i["ay"], i["y"]
+        if i["seite"] == "links":
+            x_text = rand_l - luecke - gap - i["breite"]
+            x_linie = rand_l - luecke
+        else:
+            x_text = rand_l + zeichnung.width + luecke + gap
+            x_linie = rand_l + zeichnung.width + luecke
+        d.line([(x_linie, y), (ax, ay)], fill=col, width=max(1, SCALE // 2 + 1))
+        d.ellipse([ax - SCALE, ay - SCALE, ax + SCALE, ay + SCALE], fill=col)
+        x = x_text
+        for tx, fnt in i["stuecke"]:
+            d.text((x, y), tx, font=fnt, fill=(0, 0, 0), anchor="lm")
+            x += round(fnt.getlength(tx))
+    return bild
+
+
+def geraete_elemente(spec):
+    """Elemente der Geraetebibliothek in Renderreihenfolge (wie ab_kit.js)."""
+    out = []
+
+    def lauf(liste):
+        for e in liste or []:
+            if not isinstance(e, dict):
+                continue
+            if e.get("typ") in GERAET_TYPEN:
+                out.append(e)
+            if e.get("typ") == "nebeneinander":
+                lauf(e.get("links"))
+                lauf(e.get("rechts"))
+    for seite in spec.get("seiten") or []:
+        lauf(seite.get("elemente"))
+    return out
+
+
+def geraete_bauen(spec, out):
+    """PNGs fuer alle geraet/geraete/skizze-Elemente der Spec."""
+    elemente = geraete_elemente(spec)
+    if not elemente:
+        return
+    ids = []
+    for e in elemente:
+        if e["typ"] == "geraet":
+            ids.append(e.get("id"))
+        elif e["typ"] == "geraete":
+            ids += [g.get("id") for g in e.get("geraete") or []]
+        else:
+            ids += [t.get("id") for t in e.get("teile") or []]
+    if None in ids:
+        sys.exit("Abbruch: Geraet ohne id (ab_kit.js --check nennt die Stelle).")
+    geraete_vorbereiten(ids)
+    print(f"Geraete -> {out}")
+    for n, e in enumerate(elemente, 1):
+        name = f"{e['typ']}_{n}"
+        if e["typ"] == "geraet":
+            speichern(auf_weiss(gen_geraet(e)), out, name, {"ids": [e["id"]]})
+        elif e["typ"] == "geraete":
+            for k, g in enumerate(e["geraete"], 1):
+                speichern(auf_weiss(gen_geraete_zelle(e, g)), out, f"{name}_{k}",
+                          {"ids": [g["id"]]})
+        else:
+            speichern(auf_weiss(gen_skizze(e)), out, name,
+                      {"ids": [t["id"] for t in e["teile"]]})
+
+
 GENERATOREN = {
     "scaffold": gen_scaffold,
     "balkenraster": gen_balkenraster,
@@ -1292,16 +1673,18 @@ def main(argv):
         print(f"  Hinweis: Spec kit_version {sv}, Kit ist {kit_version}.")
 
     assets = spec.get("assets") or {}
-    if not assets:
+    if not assets and not geraete_elemente(spec):
         print("Keine assets in der Spec.")
         return
-    print(f"Assets -> {out}")
+    if assets:
+        print(f"Assets -> {out}")
     for name, a in assets.items():
         typ = a.get("typ")
         if typ not in GENERATOREN:
             sys.exit(f"Abbruch: Asset '{name}' hat unbekannten typ '{typ}'. "
                      f"Bekannt: {', '.join(GENERATOREN)}")
         speichern(GENERATOREN[typ](a), out, name)
+    geraete_bauen(spec, out)
 
 
 if __name__ == "__main__":

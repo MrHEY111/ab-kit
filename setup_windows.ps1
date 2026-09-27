@@ -5,9 +5,11 @@
 #   powershell -ExecutionPolicy Bypass -File "C:\dev\ab_kit\setup_windows.ps1"
 #
 # Prueft und installiert: LibreOffice (winget), docx + yaml (npm global),
-# pillow + pyyaml (pip). Danach ein Funktionstest mit AB_Messen_GR.
+# pillow + pyyaml + pypdf (pip; pypdf nur fuer die Geraetebibliothek, Kit 1.11).
+# Danach ein Funktionstest mit AB_Messen_GR.
 # Voraussetzungen, die das Skript nur meldet: node >= 22, Python >= 3.11,
-# winget, optional pdftoppm (TeX Live) fuer die Sichtpruefung.
+# winget, optional pdftoppm (TeX Live) fuer die Sichtpruefung; pdftocairo und
+# pdfinfo aus derselben Quelle braucht die Geraetebibliothek.
 # pip wird als Modul (`python -m pip`) geprueft und noetigenfalls per
 # ensurepip nachgeruestet - eine pip.exe im PATH gibt es nicht ueberall.
 # Datei bewusst reines ASCII: Windows PowerShell 5.1 liest UTF-8 ohne BOM
@@ -65,12 +67,12 @@ if ($fehlt.Count -eq 0) {
   if ($LASTEXITCODE -ne 0) { $ok = $false }
 }
 
-Zeile "Python-Pakete pillow + pyyaml"
-python -c "import PIL, yaml" 2>$null
+Zeile "Python-Pakete pillow + pyyaml + pypdf"
+python -c "import PIL, yaml, pypdf" 2>$null
 if ($LASTEXITCODE -eq 0) {
   Write-Host "  vorhanden"
 } else {
-  python -m pip install pillow pyyaml
+  python -m pip install pillow pyyaml pypdf
   if ($LASTEXITCODE -ne 0) { $ok = $false }
 }
 

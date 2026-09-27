@@ -48,6 +48,11 @@
  * schaltet ab, `seitenzahl: true` auch bei einer Seite ein, ein Objekt stellt
  * Wortlaut, Groesse, Farbe und Ausrichtung ein. Siehe seitenzahlKonfig().
  *
+ * Geraetebibliothek (Kit 1.11): Elemente geraet, geraete (Zuordnungsraster)
+ * und skizze (Versuchsaufbau) setzen Laborgeraete per ID aus externen
+ * Katalogen; ab_assets.py rendert sie aus dem SVG, hier werden IDs, Struktur
+ * und Lizenz geprueft. Siehe geraeteVorbereiten().
+ *
  * Fallen, die hier gekapselt sind (README.md fuehrt die Liste):
  *   - kein spacing.line im Default-Style (schneidet Bilder ab)
  *   - leerer Absatz nach jeder Tabelle (LibreOffice verschmilzt sonst
@@ -970,6 +975,230 @@ ELEMENTE.nebeneinander = (e) => {
   }));
 };
 
+/* ======================================= Geraetebibliothek (Kit 1.11) ===== */
+// Elemente geraet, geraete, skizze: Laborgeraete aus einer externen
+// Bibliothek (Unterordner mit katalog.csv und svg\<id>.svg). Der Wurzelpfad
+// steht nie in der Spec: AB_KIT_BIBLIOTHEK, sonst config/bibliothek.local.json
+// ({"wurzel": "…"}, nicht im Repo). Die PNGs baut ab_assets.py aus dem SVG
+// und benennt sie <typ>_<n> (Rasterzellen geraete_<n>_<k>); n zaehlt in
+// Renderreihenfolge. geraeteVorbereiten() zaehlt identisch, der Renderer
+// vergleicht die IDs im Sidecar mit der Spec (veraltete Assets = Abbruch).
+// Lizenz aus dem Katalog: leer = ungeklaert (Hinweis), "BY" = Quellenzeile
+// unter dem Bild.
+
+const GERAET_TYPEN = new Set(["geraet", "geraete", "skizze"]);
+const MM_PX = 96 / 25.4;                       // Anzeige-px je mm
+const UNTERZEILEN = ["linie", "name", "nummer", "keine"];
+let KATALOG = null;                            // Map id -> Katalogzeile + ordner
+
+function bibliothekWurzel() {
+  let w = process.env.AB_KIT_BIBLIOTHEK;
+  if (!w) {
+    const cfg = path.join(KIT_DIR, "config", "bibliothek.local.json");
+    if (fs.existsSync(cfg)) w = JSON.parse(fs.readFileSync(cfg, "utf8")).wurzel;
+  }
+  if (!w || !fs.existsSync(w))
+    fehler("Geraetebibliothek nicht gefunden — Umgebungsvariable AB_KIT_BIBLIOTHEK setzen "
+      + "oder config/bibliothek.local.json mit {\"wurzel\": \"…\"} anlegen (README, Geraetebibliothek).");
+  return w;
+}
+
+/** Alle katalog.csv der Bibliothek (Semikolon, UTF-8, ohne Anfuehrungszeichen). */
+function katalogLaden() {
+  if (KATALOG) return KATALOG;
+  KATALOG = new Map();
+  const wurzel = bibliothekWurzel();
+  for (const ordner of fs.readdirSync(wurzel).sort()) {
+    const datei = path.join(wurzel, ordner, "katalog.csv");
+    if (!fs.existsSync(datei)) continue;
+    const zeilen = fs.readFileSync(datei, "utf8").replace(/^﻿/, "").split(/\r?\n/).filter((z) => z.trim());
+    const kopf = zeilen.shift().split(";").map((k) => k.trim());
+    for (const z of zeilen) {
+      const w = z.split(";");
+      const o = Object.fromEntries(kopf.map((k, i) => [k, (w[i] ?? "").trim()]));
+      if (!o.id) continue;
+      if (KATALOG.has(o.id)) fehler(`Geraete-ID ${o.id} steht in zwei Katalogen (${KATALOG.get(o.id).ordner}, ${ordner}).`);
+      KATALOG.set(o.id, { ...o, ordner });
+    }
+  }
+  return KATALOG;
+}
+
+/**
+ * Vor Check und Bau: Elemente zaehlen (Asset-Namen), Struktur pruefen,
+ * IDs gegen die Kataloge. Rueckgabe: Zahl der verschiedenen Geraete.
+ */
+function geraeteVorbereiten(spec) {
+  const elemente = [];
+  (spec.seiten || []).forEach((s) => elementeFlach(s.elemente)
+    .forEach((e) => { if (GERAET_TYPEN.has(e.typ)) elemente.push(e); }));
+  if (!elemente.length) return 0;
+  const ids = [];
+  const nimm = (x, wo) => {
+    if (!x || typeof x !== "object" || x.id == null) fehler(`${wo}: Feld 'id' fehlt.`);
+    ids.push(String(x.id));
+  };
+  elemente.forEach((e, i) => {
+    e._asset = `${e.typ}_${i + 1}`;
+    const wo = `${e.typ} (${e._asset})`;
+    if (e.typ === "geraet") nimm(e, wo);
+    else if (e.typ === "geraete") {
+      if (!Array.isArray(e.geraete) || !e.geraete.length) fehler(`${wo}: 'geraete' muss eine nicht-leere Liste sein.`);
+      e.geraete.forEach((g, k) => nimm(g, `${wo}, Geraet ${k + 1}`));
+      const u = e.unterzeile ?? "linie";
+      if (!UNTERZEILEN.includes(u)) fehler(`${wo}: unterzeile '${u}' unbekannt (${UNTERZEILEN.join(" | ")}).`);
+      const nr = e.geraete.filter((g) => g.nummer != null).map((g) => String(g.nummer));
+      if (new Set(nr).size !== nr.length) warnung(`${wo}: Nummern doppelt vergeben.`);
+      if (u === "name") e.geraete.forEach((g, k) => { if (!g.name) warnung(`${wo}: Geraet ${k + 1} ohne name (unterzeile: name).`); });
+    } else {
+      if (!Array.isArray(e.teile) || !e.teile.length) fehler(`${wo}: 'teile' muss eine nicht-leere Liste sein.`);
+      const namen = new Set();
+      e.teile.forEach((t, k) => {
+        nimm(t, `${wo}, Teil ${k + 1}`);
+        const n = t.name ?? `teil${k + 1}`;
+        if (namen.has(n)) fehler(`${wo}: Teilname '${n}' doppelt.`);
+        if (t.auf != null && !namen.has(t.auf)) fehler(`${wo}: Teil '${n}' steht auf '${t.auf}' — auf: muss ein frueheres Teil nennen.`);
+        namen.add(n);
+      });
+      (e.beschriftung || []).forEach((b) => {
+        if (!namen.has(b.teil)) fehler(`${wo}: Beschriftung an unbekanntem Teil '${b.teil}'.`);
+        if (b.seite != null && !["links", "rechts"].includes(b.seite)) fehler(`${wo}: Beschriftung seite '${b.seite}' (links | rechts).`);
+        if (b.text == null && b.nummer == null) warnung(`${wo}: Beschriftung an '${b.teil}' ohne text und nummer.`);
+      });
+    }
+  });
+  const kat = katalogLaden();
+  const verschieden = [...new Set(ids)];
+  const unbekannt = verschieden.filter((id) => !kat.has(id)).sort();
+  if (unbekannt.length) fehler(`Unbekannte Geraete-ID(s): ${unbekannt.join(", ")} — Kontaktboegen der Bibliothek pruefen.`);
+  const ungeklaert = new Map();
+  verschieden.filter((id) => !kat.get(id).lizenz)
+    .forEach((id) => { const o = kat.get(id).ordner; ungeklaert.set(o, (ungeklaert.get(o) ?? 0) + 1); });
+  if (ungeklaert.size)
+    hinweis(`Geraete ohne Lizenzangabe (${[...ungeklaert].map(([o, n]) => `${o}: ${n}`).join(", ")}) `
+      + "— Lizenz ungeklaert: nur fuer eigene Lerngruppen, nicht veroeffentlichen.");
+  const by = verschieden.filter((id) => /\bBY\b/.test(kat.get(id).lizenz ?? ""));
+  if (by.length) hinweis(`Namensnennung noetig, Quellenzeile wird gesetzt: ${by.join(", ")}`);
+  return verschieden.length;
+}
+
+/** Asset eines Geraet-Elements; Sidecar-IDs muessen zur Spec passen. */
+function geraetAsset(name, ids) {
+  const a = asset(name);
+  const side = path.join(CTX.outDir, `${name}.json`);
+  const d = fs.existsSync(side) ? JSON.parse(fs.readFileSync(side, "utf8")) : {};
+  const soll = ids.map(String);
+  if (JSON.stringify(d.ids ?? []) !== JSON.stringify(soll))
+    fehler(`Asset '${name}' passt nicht zur Spec (${(d.ids ?? []).join(", ") || "ohne IDs"} statt ${soll.join(", ")}) `
+      + "— python ab_assets.py neu ausfuehren.");
+  return a;
+}
+
+/** Auf maxPx Breite begrenzen (proportional); optional mit Warnung. */
+function passend(a, maxPx, warnName) {
+  if (a.w <= maxPx) return a;
+  if (warnName) warnung(`${warnName}: breiter als der Satzspiegel, auf ${Math.round(maxPx / MM_PX)} mm verkleinert.`);
+  return { ...a, h: Math.round(a.h * maxPx / a.w), w: Math.round(maxPx) };
+}
+
+/** Quellenzeile fuer Geraete mit Namensnennungspflicht (Lizenz enthaelt BY). */
+function quellenzeile(ids) {
+  const by = [...new Set(ids.map(String))].map((id) => KATALOG.get(id)).filter((k) => /\bBY\b/.test(k.lizenz ?? ""));
+  if (!by.length) return [];
+  return [absatz("Grafik: " + by.map((k) => `${k.name}, ${k.lizenz}, ${k.quelle}`).join(" · "),
+    { groesse: 14, farbe: "grau", ausrichtung: "mitte", vor: 0, nach: 120 })];
+}
+
+/** Runs „<nummer>  <text>" — Nummer fett. */
+function nummerText(nummer, text, o = {}) {
+  const k = [];
+  if (nummer != null) k.push(run(String(nummer), { ...o, fett: true }));
+  if (text) k.push(run((k.length ? "  " : "") + text, o));
+  return k;
+}
+
+/**
+ * geraet: {id, breite_mm | hoehe_mm (Default 30), nummer, beschriftung,
+ *          ausrichtung, beschnitt, spiegeln, graustufen}
+ */
+ELEMENTE.geraet = (e) => {
+  const a = passend(geraetAsset(e._asset, [e.id]), ST.satzbreite / 15, e._asset);
+  const unter = e.nummer != null || e.beschriftung;
+  const aus = e.ausrichtung ?? "mitte";
+  const out = [bildAbsatz(a, { ausrichtung: aus, vor: e.vor, nach: unter ? 40 : (e.nach ?? 120) })];
+  if (unter) out.push(new Paragraph({
+    alignment: AUSRICHTUNG[aus], spacing: { before: 0, after: e.nach ?? 120 },
+    children: nummerText(e.nummer, e.beschriftung),
+  }));
+  return [...out, ...quellenzeile([e.id])];
+};
+
+/**
+ * geraete: Raster fuer Zuordnungsaufgaben — alle Geraete gleich hoch
+ * (hoehe_mm, Default 30), unten buendig, darunter je nach unterzeile:
+ * linie = Nummer + Schreiblinie (AB), name = Nummer + Name (Loesung),
+ * nummer = nur Nummer, keine. spalten (Default 4), rahmen (Default an).
+ */
+ELEMENTE.geraete = (e) => {
+  const sp = e.spalten ?? 4;
+  const cw = Math.floor(ST.satzbreite / sp);
+  const innen = 80;
+  const maxPx = (cw - 2 * innen) / 15;
+  const unter = e.unterzeile ?? "linie";
+  const R = e.rahmen === false ? KEIN_RAHMEN : rahmen(e.staerke ?? 4, e.rahmen_farbe ?? ST.rahmen_farbe);
+  const bildRand = unter === "keine" ? R : { ...R, bottom: KEIN_RAHMEN.bottom };
+  const textRand = { ...R, top: KEIN_RAHMEN.top };
+  const hoehe = Math.round((e.hoehe_mm ?? 30) * MM_PX * 15) + 160;
+  const zeile = (g) => {
+    if (unter === "linie") {
+      const pos = cw - 2 * innen - 20;
+      return new Paragraph({
+        spacing: { before: 200, after: 0 },
+        tabStops: [{ type: TabStopType.LEFT, position: pos, leader: LeaderType.UNDERSCORE }],
+        children: [...nummerText(g.nummer, null), run("\t ")],   // Leader-Falle: Leerzeichen nach dem Tab
+      });
+    }
+    return new Paragraph({
+      alignment: AlignmentType.CENTER, spacing: { before: 0, after: 0 },
+      children: nummerText(g.nummer, unter === "name" ? g.name : null),
+    });
+  };
+  const rows = [];
+  for (let i = 0; i < e.geraete.length; i += sp) {
+    const reihe = e.geraete.slice(i, i + sp);
+    const bild = [], text = [];
+    reihe.forEach((g, j) => {
+      const a = passend(geraetAsset(`${e._asset}_${i + j + 1}`, [g.id]), maxPx);
+      bild.push(zelle([bildAbsatz(a, { nach: 0 })], cw,
+        { rahmen: bildRand, valign: VerticalAlign.BOTTOM, zelle: { top: 80, bottom: 40, left: innen, right: innen } }));
+      text.push(zelle([zeile(g)], cw, { rahmen: textRand, zelle: { top: 20, bottom: 100, left: innen, right: innen } }));
+    });
+    for (let j = reihe.length; j < sp; j++) {
+      bild.push(zelle([leer()], cw, { rahmen: KEIN_RAHMEN }));
+      text.push(zelle([leer()], cw, { rahmen: KEIN_RAHMEN }));
+    }
+    rows.push(new TableRow({ cantSplit: true, height: { value: hoehe, rule: HeightRule.ATLEAST }, children: bild }));
+    if (unter !== "keine") rows.push(new TableRow({ cantSplit: true, children: text }));
+  }
+  return [...tabelleMitSpacer(new Table({
+    width: { size: cw * sp, type: WidthType.DXA },
+    columnWidths: Array(sp).fill(cw),
+    borders: KEIN_RAHMEN,
+    rows,
+  })), ...quellenzeile(e.geraete.map((g) => g.id))];
+};
+
+/**
+ * skizze: Versuchsaufbau aus mehreren Geraeten, zusammengesetzt von
+ * ab_assets.py (teile, auf, x/y/dx/dy, breite_mm, beschriftung — siehe README).
+ */
+ELEMENTE.skizze = (e) => {
+  const ids = e.teile.map((t) => t.id);
+  const a = passend(geraetAsset(e._asset, ids), ST.satzbreite / 15, e._asset);
+  return [bildAbsatz(a, { ausrichtung: e.ausrichtung ?? "mitte", vor: e.vor, nach: e.nach ?? 120 }),
+    ...quellenzeile(ids)];
+};
+
 /* ===================================================== Seiten / Dokument == */
 
 const BEKANNTE_FELDER = new Set(["typ"]);
@@ -1497,6 +1726,7 @@ async function main() {
   try { spec = YAML.parse(fs.readFileSync(specPfad, "utf8")); }
   catch (err) { fehler(`Spec nicht lesbar: ${err.message}`); }
   specPruefen(spec);
+  const geraete = geraeteVorbereiten(spec);     // Kit 1.11: IDs gegen die Bibliothek
   // Vor dem Bauplan-Check: zitierte Aufgaben tragen danach ihren Text.
   const zitate = zitateAufloesen(spec, specPfad);
   aufgabenBilanz(spec);              // _punkte_gesamt fuer das Rendering (Kit 1.8)
@@ -1507,7 +1737,8 @@ async function main() {
       + `Bauplan ${bauplan.length ? bauplan.length + " Befund(e)" : "ohne Befund"}`
       + ((spec.dokumenttyp ?? "ab") === "uebung" ? " (Uebung — \u00dc-1 bis \u00dc-5 statt Bauplan)"
         : (spec.dokumenttyp ?? "ab") !== "ab" ? " (Loesung — Bauplan nicht geprueft)" : "")
-      + (zitate ? `, ${zitate} Zitat(e) aus ${spec.ab_spec}` : ""));
+      + (zitate ? `, ${zitate} Zitat(e) aus ${spec.ab_spec}` : "")
+      + (geraete ? `, ${geraete} Geraet(e) aus der Bibliothek` : ""));
     warnungen.forEach((w) => console.log("  Warnung: " + w));
     hinweise.forEach((h) => console.log("  Hinweis: " + h));
     return;
